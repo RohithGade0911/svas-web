@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Svas — Regional Meal Planner (review build)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600&family=Noto+Sans+Telugu&family=Noto+Sans+Gurmukhi&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600&family=Noto+Sans+Telugu&family=Noto+Sans+Gurmukhi&family=Noto+Sans+Tamil&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -58,6 +58,7 @@
         <legend>Your cuisine <span class="muted">(pick one or more)</span></legend>
         <label class="chk"><input type="checkbox" name="region" value="Andhra" checked> Andhra</label>
         <label class="chk"><input type="checkbox" name="region" value="Telangana" checked> Telangana</label>
+        <label class="chk"><input type="checkbox" name="region" value="Tamil Nadu"> Tamil Nadu</label>
         <label class="chk"><input type="checkbox" name="region" value="Punjab"> Punjab</label>
       </fieldset>
 
@@ -96,7 +97,7 @@
     <p class="muted">All <span id="db-count"></span> dishes with computed macros &amp; recipes. Add a status/notes per dish — saved in your browser — then export a review CSV.</p>
     <div class="filters">
       <input type="search" id="db-search" placeholder="Search dish…">
-      <select id="f-region"><option value="">All regions</option><option>Andhra</option><option>Telangana</option><option>Andhra &amp; Telangana</option><option>Punjab</option></select>
+      <select id="f-region"><option value="">All regions</option><option>Andhra</option><option>Telangana</option><option>Andhra &amp; Telangana</option><option>Tamil Nadu</option><option>Punjab</option></select>
       <select id="f-meal"><option value="">All meals</option><option>breakfast</option><option>lunch</option><option>dinner</option><option>snack</option></select>
       <select id="f-diet"><option value="">All diets</option><option>veg</option><option>egg</option><option>non-veg</option></select>
       <select id="f-status"><option value="">All statuses</option><option>Pending</option><option>Approved</option><option>Needs fix</option></select>
