@@ -44,7 +44,7 @@ legend{font-size:.8rem;font-weight:600;padding:0 .4rem}
 .meal .slot{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);width:74px;flex:none;padding-top:.15rem}
 .meal .dish{flex:1}
 .meal .dish .nm{font-weight:600}
-.meal .dish .nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil',sans-serif;color:var(--curry);font-size:.85rem}
+.meal .dish .nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil','Noto Sans Kannada','Noto Sans Malayalam',sans-serif;color:var(--curry);font-size:.85rem}
 .meal .mac{font-size:.74rem;color:var(--muted);text-align:right;white-space:nowrap}
 
 /* db list */
@@ -54,7 +54,7 @@ legend{font-size:.8rem;font-weight:600;padding:0 .4rem}
 .dish-card{border:1px solid var(--line);border-radius:12px;padding:.7rem .8rem;background:#fff;cursor:pointer}
 .dish-card:hover{border-color:var(--turmeric)}
 .dish-card .nm{font-weight:600}
-.dish-card .nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil',sans-serif;color:var(--curry);font-size:.85rem}
+.dish-card .nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil','Noto Sans Kannada','Noto Sans Malayalam',sans-serif;color:var(--curry);font-size:.85rem}
 .dish-card .meta{font-size:.72rem;color:var(--muted);margin:.25rem 0}
 .dish-card .mac{font-size:.78rem;font-weight:500}
 .badge{display:inline-block;font-size:.62rem;font-weight:600;padding:.1rem .45rem;border-radius:999px;margin-left:.3rem;vertical-align:middle}
@@ -90,7 +90,7 @@ ol.steps li{margin-bottom:.3rem}
 .comp:last-child{border-bottom:none}
 .comp .cinfo{flex:1;min-width:0}
 .comp .nm{font-weight:600;font-size:.92rem}
-.comp .nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil',sans-serif;color:var(--curry);font-size:.82rem}
+.comp .nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil','Noto Sans Kannada','Noto Sans Malayalam',sans-serif;color:var(--curry);font-size:.82rem}
 .comp .por{font-size:.74rem;color:var(--muted)}
 .comp .cmac{font-size:.74rem;color:var(--muted);text-align:right;white-space:nowrap;line-height:1.35}
 .comp .cact{display:flex;gap:.25rem;flex:none}
@@ -113,4 +113,4 @@ ul.ing .ing-rf{width:24px;height:24px;font-size:.8rem;vertical-align:middle;marg
 .mval{width:96px;text-align:right;font-size:.8rem;color:var(--muted)}
 .mval b{color:var(--spice)}
 .adj{font-size:.8rem;background:#f4ecdd;border-radius:10px;padding:.45rem .7rem;margin-top:.5rem;color:#6b4e1e}
-.nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil',sans-serif}
+.nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi','Noto Sans Tamil','Noto Sans Kannada','Noto Sans Malayalam',sans-serif}
