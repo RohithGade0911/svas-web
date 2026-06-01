@@ -6,7 +6,7 @@
 <title>Svas — Regional Meal Planner (review build)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600&family=Noto+Sans+Telugu&family=Noto+Sans+Gurmukhi&family=Noto+Sans+Tamil&family=Noto+Sans+Kannada&family=Noto+Sans+Malayalam&family=Noto+Sans+Devanagari&family=Noto+Sans+Gujarati&family=Noto+Sans+Bengali&family=Noto+Sans+Oriya&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=7" />
+<link rel="stylesheet" href="styles.css?v=8" />
 </head>
 <body>
 <header class="topbar">
@@ -21,7 +21,7 @@
 <main id="tab-plan" class="tab-panel active">
   <section class="card form-card">
     <h2>Tell us about you</h2>
-    <p class="muted">We build a 7-day plan from regional Indian home cooking across 18 states — macro-balanced to your goal.</p>
+    <p class="muted">We build a 7-day plan from regional Indian home cooking across 27 states — macro-balanced to your goal.</p>
     <form id="profile-form">
       <div class="grid">
         <label>Sex
@@ -75,6 +75,15 @@
         <label class="chk"><input type="checkbox" name="region" value="Manipur"> Manipur</label>
         <label class="chk"><input type="checkbox" name="region" value="Meghalaya"> Meghalaya</label>
         <label class="chk"><input type="checkbox" name="region" value="Sikkim"> Sikkim</label>
+        <label class="chk"><input type="checkbox" name="region" value="Bihar"> Bihar</label>
+        <label class="chk"><input type="checkbox" name="region" value="Jharkhand"> Jharkhand</label>
+        <label class="chk"><input type="checkbox" name="region" value="Chhattisgarh"> Chhattisgarh</label>
+        <label class="chk"><input type="checkbox" name="region" value="Madhya Pradesh"> Madhya Pradesh</label>
+        <label class="chk"><input type="checkbox" name="region" value="Haryana"> Haryana</label>
+        <label class="chk"><input type="checkbox" name="region" value="Himachal Pradesh"> Himachal Pradesh</label>
+        <label class="chk"><input type="checkbox" name="region" value="Uttarakhand"> Uttarakhand</label>
+        <label class="chk"><input type="checkbox" name="region" value="Tripura"> Tripura</label>
+        <label class="chk"><input type="checkbox" name="region" value="Mizoram"> Mizoram</label>
         <label class="chk"><input type="checkbox" name="region" value="Nutritionist's Kitchen"> 💪 Nutritionist's Kitchen (high-protein)</label>
       </fieldset>
 
@@ -113,7 +122,7 @@
     <p class="muted">All <span id="db-count"></span> dishes with computed macros &amp; recipes. Add a status/notes per dish — saved in your browser — then export a review CSV.</p>
     <div class="filters">
       <input type="search" id="db-search" placeholder="Search dish…">
-      <select id="f-region"><option value="">All regions</option><option>Andhra</option><option>Telangana</option><option>Andhra &amp; Telangana</option><option>Tamil Nadu</option><option>Karnataka</option><option>Kerala</option><option>Maharashtra</option><option>Gujarat</option><option>Goa</option><option>West Bengal</option><option>Odisha</option><option>Punjab</option><option>Rajasthan</option><option>Uttar Pradesh</option><option>Kashmir</option><option>Assam</option><option>Nagaland</option><option>Manipur</option><option>Meghalaya</option><option>Sikkim</option><option>Nutritionist's Kitchen</option></select>
+      <select id="f-region"><option value="">All regions</option><option>Andhra</option><option>Telangana</option><option>Andhra &amp; Telangana</option><option>Tamil Nadu</option><option>Karnataka</option><option>Kerala</option><option>Maharashtra</option><option>Gujarat</option><option>Goa</option><option>West Bengal</option><option>Odisha</option><option>Punjab</option><option>Rajasthan</option><option>Uttar Pradesh</option><option>Kashmir</option><option>Assam</option><option>Nagaland</option><option>Manipur</option><option>Meghalaya</option><option>Sikkim</option><option>Bihar</option><option>Jharkhand</option><option>Chhattisgarh</option><option>Madhya Pradesh</option><option>Haryana</option><option>Himachal Pradesh</option><option>Uttarakhand</option><option>Tripura</option><option>Mizoram</option><option>Nutritionist's Kitchen</option></select>
       <select id="f-meal"><option value="">All meals</option><option>breakfast</option><option>lunch</option><option>dinner</option><option>snack</option></select>
       <select id="f-diet"><option value="">All diets</option><option>veg</option><option>egg</option><option>non-veg</option></select>
       <select id="f-status"><option value="">All statuses</option><option>Pending</option><option>Approved</option><option>Needs fix</option></select>
@@ -127,7 +136,7 @@
 
 <footer class="foot">Svas · review build · data computed from IFCT 2017 · macros to be validated by a registered dietitian</footer>
 
-<script src="data.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="data.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
