@@ -112,20 +112,21 @@
       // lunch & dinner: thali (grain + dal/main + sabzi [+curd]) OR occasional one-dish complete
       for (const slot of ['lunch','dinner']) {
         const sk = T.kcal*SLOT[slot];
-        const oneDish = rand() < 0.22;
-        if (oneDish) {
-          const c = makeComp(u, d=>(d.meal===slot)&&d.role==='complete', sk, rand, used, 'meal');
-          if (c) { slots[slot] = { kind:'single', items:[c] }; continue; }
-        }
+        const tryComplete = () => makeComp(u, d=>(d.meal===slot)&&d.role==='complete', sk, rand, used, 'meal');
+        if (rand() < 0.22) { const c = tryComplete(); if (c) { slots[slot] = { kind:'single', items:[c] }; continue; } }
         const items = [];
         const grain = makeComp(u, d=>d.role==='grain', sk*0.45, rand, used, 'grain');
         const prot  = isVeg ? makeComp(u, d=>d.role==='dal', sk*0.35, rand, used, 'dal')
                             : (makeComp(u, d=>d.role==='main', sk*0.40, rand, used, 'main') || makeComp(u, d=>d.role==='dal', sk*0.35, rand, used, 'dal'));
         const sabzi = makeComp(u, d=>d.role==='sabzi', sk*0.20, rand, used, 'sabzi');
         [grain, prot, sabzi].forEach(c => c && items.push(c));
+        // can't form a real thali (e.g. an all-"complete" set like the high-protein bowls) -> serve one complete dish
+        if (items.filter(c => c.role !== 'side').length < 2) {
+          const c = tryComplete(); if (c) { slots[slot] = { kind:'single', items:[c] }; continue; }
+        }
         if (!u.allergies.includes('dairy')) { const curd = DISHES.find(d=>d.id==='base_curd');
           if (curd && eligible(curd,u)) items.push({ role:'side', pool:[curd], idx:0, dish:curd, ings:cloneIngs(curd), units:1, targetKcal:0 }); }
-        slots[slot] = items.length ? { kind:'plate', items } : { kind:'single', items:[ makeComp(u, d=>d.meal===slot, sk, rand, used, 'meal') ].filter(Boolean) };
+        slots[slot] = items.length ? { kind:'plate', items } : { kind:'single', items:[ tryComplete() ].filter(Boolean) };
       }
       days.push({ slots });
     }
