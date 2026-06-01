@@ -7,7 +7,11 @@
   /* substitution reverse map */
   const GROUP_OF = {};
   Object.entries(SUBS).forEach(([g, arr]) => arr.forEach(id => { if (!(id in GROUP_OF)) GROUP_OF[id] = g; }));
-  const hasAlt = id => GROUP_OF[id] && SUBS[GROUP_OF[id]].length > 1;
+  // Only auxiliary ingredients may be swapped — never a dish's defining base.
+  // (e.g. green gram IS pesarattu; you can't make it from chana dal.) To change the
+  // core ingredient, swap the whole DISH instead (dish-level ↻).
+  const SAFE_SWAP = new Set(['cooking_oil', 'sweetener', 'milk']);
+  const hasAlt = id => { const g = GROUP_OF[id]; return !!g && SAFE_SWAP.has(g) && SUBS[g].length > 1; };
   const nextAlt = id => { const g = GROUP_OF[id]; if (!g) return id; const a = SUBS[g]; return a[(a.indexOf(id) + 1) % a.length]; };
 
   /* allergens (derived from ingredients so swaps update them) */
@@ -37,7 +41,7 @@
     if (u === 1) return '1 ' + dish.unit; const n = Number.isInteger(u) ? u : u.toFixed(1); return n + ' ' + (pl[dish.unit] || dish.unit); }
 
   /* eligibility */
-  const BUD = { low:1, medium:2, high:3 }, DIET = { veg:0, egg:1, 'non-veg':2 };
+  const DIET = { veg:0, egg:1, 'non-veg':2 };
   const regionOk = (d,u) => d.region==='All' || d.cuisine==='Both' || u.regions.includes(d.region) ||
     (d.region==='Andhra & Telangana' && (u.regions.includes('Andhra')||u.regions.includes('Telangana')));
   const gramsOf = (d,id) => { const x = d.ingredients.find(i=>i.id===id); return x?x.g:0; };
@@ -46,7 +50,6 @@
   function eligible(d, u) {
     if (!regionOk(d,u)) return false;
     if (DIET[d.diet] > DIET[u.diet]) return false;
-    if (BUD[d.budget] > BUD[u.budget]) return false;
     // Avoid (allergies): strict exclusion (uses live ingredient list)
     if (u.allergies.some(a => allergensOf(d.ingredients).includes(a))) return false;
     // Diabetic / PCOS: no sweets or added-sugar dishes (low-GI intent)
@@ -215,7 +218,7 @@
   /* ---------- form ---------- */
   function readForm(form) { const fd = new FormData(form); const m = n => fd.getAll(n);
     return { sex:fd.get('sex'), age:+fd.get('age'), weight:+fd.get('weight'), height:+fd.get('height'),
-      activity:fd.get('activity'), goal:fd.get('goal'), diet:fd.get('diet'), budget:fd.get('budget'),
+      activity:fd.get('activity'), goal:fd.get('goal'), diet:fd.get('diet'),
       regions:m('region'), conditions:m('cond'), allergies:m('allergy') }; }
   let T = null;
   function calcIntake() {
