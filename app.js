@@ -26,6 +26,21 @@
   Object.entries(ALLERGEN).forEach(([a, ids]) => ids.forEach(id => (ALLERGEN_OF[id] = ALLERGEN_OF[id] || []).push(a)));
   const allergensOf = ings => { const s = new Set(); ings.forEach(x => (ALLERGEN_OF[x.id] || []).forEach(a => s.add(a))); return [...s]; };
 
+  /* region-aware native names for the shared base staples (rice/chapati/curd) */
+  const LANG_OF = { 'Andhra':'te','Telangana':'te','Andhra & Telangana':'te','Tamil Nadu':'ta','Karnataka':'kn',
+    'Kerala':'ml','Punjab':'pa','West Bengal':'bn','Tripura':'bn','Assam':'bn','Odisha':'or','Gujarat':'gu',
+    'Maharashtra':'hi','Goa':'hi','Rajasthan':'hi','Uttar Pradesh':'hi','Kashmir':'hi','Madhya Pradesh':'hi',
+    'Bihar':'hi','Jharkhand':'hi','Chhattisgarh':'hi','Haryana':'hi','Himachal Pradesh':'hi','Uttarakhand':'hi' };
+  const BASE_NATIVE = {
+    base_steamed_rice:{te:'అన్నం',ta:'சாதம்',kn:'ಅನ್ನ',ml:'ചോറ്',pa:'ਚੌਲ',bn:'ভাত',or:'ଭାତ',gu:'ભાત',hi:'चावल'},
+    base_chapati:{te:'చపాతీ',ta:'சப்பாத்தி',kn:'ಚಪಾತಿ',ml:'ചപ്പാത്തി',pa:'ਰੋਟੀ',bn:'রুটি',or:'ରୁଟି',gu:'રોટલી',hi:'रोटी'},
+    base_curd:{te:'పెరుగు',ta:'தயிர்',kn:'ಮೊಸರು',ml:'തൈര്',pa:'ਦਹੀਂ',bn:'দই',or:'ଦହି',gu:'દહીં',hi:'दही'},
+  };
+  function nativeOf(dish){
+    if (BASE_NATIVE[dish.id]) { const lang = LANG_OF[(U && U.regions && U.regions[0]) || '']; return lang ? (BASE_NATIVE[dish.id][lang]||'') : ''; }
+    return dish.native || '';
+  }
+
   /* macro helpers */
   const cloneIngs = d => d.ingredients.map(x => ({ id: x.id, name: x.name, g: x.g }));
   function totals(ings) { let t = { kcal:0,p:0,f:0,c:0,fib:0,na:0 };
@@ -90,12 +105,12 @@
 
   /* build a component: a ranked pool of dishes for a role + chosen units */
   function makeComp(u, roleFilter, slotKcal, rand, used, role) {
-    let pool = DISHES.filter(d => eligible(d,u) && roleFilter(d) && (used[d.id]||0) < 2);
-    if (!pool.length) pool = DISHES.filter(d => eligible(d,u) && roleFilter(d));
+    let pool = DISHES.filter(d => eligible(d,u) && roleFilter(d));
     if (!pool.length) return null;
-    // rank by how close default-units kcal is to the share, with a little seeded jitter for variety
-    pool = pool.map(d => ({ d, fit: Math.abs(unitMacros(d, d.ingredients, d.defU).kcal - slotKcal) + rand()*40 - condBonus(d,u) }))
-               .sort((a,b)=>a.fit-b.fit).map(x=>x.d);
+    // least-used FIRST (rotate through the whole pool before repeating), then macro-fit + jitter.
+    // This maximises day-to-day variety even when a single small-pool state is selected.
+    pool = pool.map(d => ({ d, key: (used[d.id]||0)*100000 + Math.abs(unitMacros(d, d.ingredients, d.defU).kcal - slotKcal) + rand()*90 - condBonus(d,u) }))
+               .sort((a,b)=>a.key-b.key).map(x=>x.d);
     const dish = pool[0];
     used[dish.id] = (used[dish.id]||0)+1;
     return { role, pool, idx:0, dish, ings: cloneIngs(dish), units: unitsForKcal(dish, dish.ingredients, slotKcal), targetKcal: slotKcal };
@@ -153,7 +168,7 @@
     return '<div class="comp">'+
       '<div class="cinfo">'+
         '<div class="nm">'+c.dish.name+(swapped?' <span class="edited">· edited</span>':'')+'</div>'+
-        '<div class="nat">'+(c.dish.native||'')+'</div>'+
+        '<div class="nat">'+nativeOf(c.dish)+'</div>'+
         '<div class="por">'+portionLabel(c.dish,c.units)+' · ~'+m.grams+' g'+'</div>'+
       '</div>'+
       '<div class="cmac">~'+m.kcal+' kcal<br>'+m.p+'g P</div>'+
@@ -202,7 +217,7 @@
       const m = unitMacros(dish, ings, units), al = allergensOf(ings);
       box.innerHTML =
         '<button class="close" id="m-close">×</button>'+
-        '<h3>'+dish.name+'</h3><div class="nat" style="color:#2D6A2F">'+(dish.native||'')+'</div>'+
+        '<h3>'+dish.name+'</h3><div class="nat" style="color:#2D6A2F">'+nativeOf(dish)+'</div>'+
         '<div class="kv">'+dish.region+' · '+dish.meal+' · '+dish.diet+' · '+portionLabel(dish,units)+' (~'+m.grams+' g) · '+(dish.prep_min+dish.cook_min)+' min</div>'+
         '<div class="macro-grid"><div><b>~'+m.kcal+'</b><small>kcal</small></div><div><b>'+m.p+'g</b><small>protein</small></div>'+
           '<div><b>'+m.c+'g</b><small>carb</small></div><div><b>'+m.fat+'g</b><small>fat</small></div></div>'+
