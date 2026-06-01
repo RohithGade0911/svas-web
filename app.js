@@ -106,9 +106,19 @@
     const isVeg = u.diet === 'veg';
     for (let day=0; day<7; day++) {
       const slots = {};
-      // breakfast & snack: single complete/snack item
-      slots.breakfast = { kind:'single', items:[ makeComp(u, d=>d.meal==='breakfast', T.kcal*SLOT.breakfast, rand, used, 'meal') ].filter(Boolean) };
-      slots.snack     = { kind:'single', items:[ makeComp(u, d=>d.meal==='snack',     T.kcal*SLOT.snack,     rand, used, 'snack') ].filter(Boolean) };
+      // breakfast & snack: single item, with fallbacks so the slot is never empty
+      // (some regions have no breakfast-tagged dish -> fall back to a snack, then any complete dish)
+      const bk = T.kcal*SLOT.breakfast, sn = T.kcal*SLOT.snack;
+      slots.breakfast = { kind:'single', items:[
+        makeComp(u, d=>d.meal==='breakfast', bk, rand, used, 'meal')
+        || makeComp(u, d=>d.meal==='snack' && d.role!=='sweet', bk, rand, used, 'meal')
+        || makeComp(u, d=>d.role==='complete', bk, rand, used, 'meal')
+      ].filter(Boolean) };
+      slots.snack = { kind:'single', items:[
+        makeComp(u, d=>d.meal==='snack', sn, rand, used, 'snack')
+        || makeComp(u, d=>['side','sweet','drink'].includes(d.role), sn, rand, used, 'snack')
+        || makeComp(u, d=>d.role==='complete', sn, rand, used, 'snack')
+      ].filter(Boolean) };
       // lunch & dinner: thali (grain + dal/main + sabzi [+curd]) OR occasional one-dish complete
       for (const slot of ['lunch','dinner']) {
         const sk = T.kcal*SLOT[slot];
