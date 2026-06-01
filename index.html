@@ -85,10 +85,14 @@
         <label class="chk"><input type="checkbox" name="allergy" value="soy"> Soy</label>
       </fieldset>
 
-      <button class="btn primary" type="submit">Generate my 7-day plan</button>
+      <div class="form-actions">
+        <button class="btn primary" type="submit" id="calc-btn">Calculate my intake →</button>
+        <button class="btn" type="button" id="plan-btn" disabled>Generate 7-day plan</button>
+      </div>
     </form>
   </section>
 
+  <section id="intake-output"></section>
   <section id="plan-output"></section>
 </main>
 

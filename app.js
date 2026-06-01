@@ -40,14 +40,31 @@
   const BUD = { low:1, medium:2, high:3 }, DIET = { veg:0, egg:1, 'non-veg':2 };
   const regionOk = (d,u) => d.region==='All' || d.cuisine==='Both' || u.regions.includes(d.region) ||
     (d.region==='Andhra & Telangana' && (u.regions.includes('Andhra')||u.regions.includes('Telangana')));
+  const gramsOf = (d,id) => { const x = d.ingredients.find(i=>i.id===id); return x?x.g:0; };
+  const hasAddedSugar = d => gramsOf(d,'sugar')>=12 || gramsOf(d,'jaggery')>=15;
+  const isRefined = d => gramsOf(d,'wheat_maida')>=50;
   function eligible(d, u) {
     if (!regionOk(d,u)) return false;
     if (DIET[d.diet] > DIET[u.diet]) return false;
     if (BUD[d.budget] > BUD[u.budget]) return false;
+    // Avoid (allergies): strict exclusion (uses live ingredient list)
     if (u.allergies.some(a => allergensOf(d.ingredients).includes(a))) return false;
-    if ((u.conditions.includes('diabetic')||u.conditions.includes('pcos')) && /sweet/.test(d.health)) return false;
-    if (u.conditions.includes('bp')) { const m = unitMacros(d, d.ingredients, d.defU); if (m.na > 700) return false; }
+    // Diabetic / PCOS: no sweets or added-sugar dishes (low-GI intent)
+    if ((u.conditions.includes('diabetic')||u.conditions.includes('pcos')) && (/sweet/.test(d.health) || hasAddedSugar(d))) return false;
+    // BP / low-sodium: drop high-sodium dishes
+    if (u.conditions.includes('bp') && unitMacros(d, d.ingredients, d.defU).na > 600) return false;
     return true;
+  }
+  // soft preference (higher = ranked first) — steers plans healthier for conditions/goal
+  function condBonus(d, u) {
+    let b = 0; const t = d.health || '';
+    if (u.conditions.includes('diabetic') || u.conditions.includes('pcos')) {
+      if (/diabetic-friendly|millet|high-fiber/.test(t)) b += 70;
+      if (isRefined(d)) b -= 60;
+    }
+    if (u.conditions.includes('bp')) { const na = unitMacros(d, d.ingredients, d.defU).na; b += na<300?40 : na>450?-40:0; }
+    if (u.goal==='lose' && /low-cal|light|high-fiber/.test(t)) b += 25;
+    return b;
   }
 
   /* targets */
@@ -55,10 +72,16 @@
   const SLOT = { breakfast:0.25, lunch:0.35, snack:0.15, dinner:0.25 };
   function targets(u) {
     const bmr = 10*u.weight + 6.25*u.height - 5*u.age + (u.sex==='male'?5:-161);
-    let tdee = bmr*ACT[u.activity]; if (u.goal==='lose') tdee-=500; else if (u.goal==='gain') tdee+=400;
-    let perKg = u.goal==='gain'?2.0 : u.goal==='lose'?1.8 : 1.6; if (u.diet==='veg') perKg = Math.min(perKg, 1.4);
-    const protein = perKg*u.weight, fat = tdee*0.25/9, carb = (tdee - protein*4 - fat*9)/4;
-    return { kcal:Math.round(tdee), protein:Math.round(protein), fat:Math.round(fat), carb:Math.round(carb) };
+    const tdee = bmr*ACT[u.activity];
+    let kcal = tdee; if (u.goal==='lose') kcal-=500; else if (u.goal==='gain') kcal+=400;
+    const lowGI = u.conditions.includes('diabetic') || u.conditions.includes('pcos');
+    let perKg = u.goal==='gain'?2.0 : u.goal==='lose'?1.8 : 1.6;
+    if (lowGI) perKg = Math.max(perKg, 1.6);          // protein aids satiety/insulin response
+    if (u.diet==='veg') perKg = Math.min(perKg, 1.4); // realistic ceiling for veg plans
+    const fatPct = lowGI ? 0.30 : 0.25;               // diabetic/PCOS: more fat, fewer carbs
+    const protein = perKg*u.weight, fat = kcal*fatPct/9, carb = Math.max(0,(kcal - protein*4 - fat*9)/4);
+    return { bmr:Math.round(bmr), tdee:Math.round(tdee), kcal:Math.round(kcal),
+      protein:Math.round(protein), fat:Math.round(fat), carb:Math.round(carb), fatPct, lowGI };
   }
   const rng = seed => { let s=seed%2147483647; if(s<=0)s+=2147483646; return ()=>(s=s*16807%2147483647)/2147483647; };
 
@@ -68,7 +91,7 @@
     if (!pool.length) pool = DISHES.filter(d => eligible(d,u) && roleFilter(d));
     if (!pool.length) return null;
     // rank by how close default-units kcal is to the share, with a little seeded jitter for variety
-    pool = pool.map(d => ({ d, fit: Math.abs(unitMacros(d, d.ingredients, d.defU).kcal - slotKcal) + rand()*40 }))
+    pool = pool.map(d => ({ d, fit: Math.abs(unitMacros(d, d.ingredients, d.defU).kcal - slotKcal) + rand()*40 - condBonus(d,u) }))
                .sort((a,b)=>a.fit-b.fit).map(x=>x.d);
     const dish = pool[0];
     used[dish.id] = (used[dish.id]||0)+1;
@@ -194,12 +217,40 @@
     return { sex:fd.get('sex'), age:+fd.get('age'), weight:+fd.get('weight'), height:+fd.get('height'),
       activity:fd.get('activity'), goal:fd.get('goal'), diet:fd.get('diet'), budget:fd.get('budget'),
       regions:m('region'), conditions:m('cond'), allergies:m('allergy') }; }
-  document.getElementById('profile-form').addEventListener('submit', e => {
-    e.preventDefault(); U = readForm(e.target);
-    const out = document.getElementById('plan-output');
-    if (!U.regions.length) { out.innerHTML = '<div class="card empty">Please pick at least one cuisine.</div>'; return; }
-    PLAN = buildPlan(U); renderPlan(); out.scrollIntoView({ behavior:'smooth', block:'start' });
-  });
+  let T = null;
+  function calcIntake() {
+    U = readForm(document.getElementById('profile-form'));
+    const io = document.getElementById('intake-output');
+    if (!U.regions.length) { io.innerHTML = '<div class="card empty">Please pick at least one cuisine.</div>'; document.getElementById('plan-btn').disabled = true; return; }
+    T = targets(U); renderIntake(U, T);
+    document.getElementById('plan-btn').disabled = false;
+    document.getElementById('plan-output').innerHTML = '';
+    io.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+  function renderIntake(u, T) {
+    const goalNote = u.goal==='lose' ? '500 kcal deficit (fat loss)' : u.goal==='gain' ? '400 kcal surplus (muscle gain)' : 'maintenance';
+    const pKcal=T.protein*4, cKcal=T.carb*4, fKcal=T.fat*9, tot=pKcal+cKcal+fKcal||1, pct=v=>Math.round(v/tot*100);
+    const conds = u.conditions.length ? u.conditions.map(c=>({diabetic:'diabetic-friendly',pcos:'PCOS',bp:'low-sodium'}[c]||c)).join(', ') : null;
+    const bar = (label,g,kcal,color)=>'<div class="mrow"><div class="mlab">'+label+'</div>'+
+      '<div class="mtrack"><div class="mfill" style="width:'+pct(kcal)+'%;background:'+color+'"></div></div>'+
+      '<div class="mval"><b>'+g+' g</b> · '+pct(kcal)+'%</div></div>';
+    document.getElementById('intake-output').innerHTML =
+      '<div class="card intake"><h2>Your daily intake</h2>'+
+      '<div class="kcal-big">'+T.kcal+' <span>kcal / day</span></div>'+
+      '<div class="muted" style="font-size:.8rem;margin-bottom:.9rem">BMR '+T.bmr+' · TDEE '+T.tdee+' · '+goalNote+'</div>'+
+      bar('Protein',T.protein,pKcal,'#2D6A2F')+bar('Carbs',T.carb,cKcal,'#E8A020')+bar('Fat',T.fat,fKcal,'#C1440E')+
+      (conds? '<div class="adj">⚖ Targets &amp; dishes adjusted for: <b>'+conds+'</b>'+(T.lowGI?' — more protein, fewer carbs':'')+'</div>':'')+
+      (u.allergies.length? '<div class="adj">🚫 Avoiding: <b>'+u.allergies.join(', ')+'</b></div>':'')+
+      '<p class="muted" style="font-size:.75rem;margin-top:.6rem">Approximate (Mifflin-St Jeor). Now generate a plan built to these numbers.</p></div>';
+  }
+  function genPlan() {
+    if (!U || !T) { calcIntake(); }
+    if (!U || !U.regions.length) return;
+    PLAN = buildPlan(U); renderPlan();
+    document.getElementById('plan-output').scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+  document.getElementById('profile-form').addEventListener('submit', e => { e.preventDefault(); calcIntake(); });
+  document.getElementById('plan-btn').addEventListener('click', genPlan);
 
   /* ---------- tabs ---------- */
   document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {

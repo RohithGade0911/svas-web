@@ -100,3 +100,16 @@ ol.steps li{margin-bottom:.3rem}
 .edited{color:var(--chilli);font-size:.7rem;font-weight:600}
 ul.ing li{margin-bottom:.2rem}
 ul.ing .ing-rf{width:24px;height:24px;font-size:.8rem;vertical-align:middle;margin-left:.2rem}
+
+/* two-button row + intake panel */
+.form-actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.8rem}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.intake .kcal-big{font-family:var(--serif);font-size:2.4rem;font-weight:600;color:var(--curry);line-height:1}
+.intake .kcal-big span{font-family:var(--sans);font-size:.9rem;color:var(--muted);font-weight:500}
+.mrow{display:flex;align-items:center;gap:.7rem;margin:.45rem 0}
+.mlab{width:64px;font-size:.82rem;font-weight:600}
+.mtrack{flex:1;height:10px;background:#f0eadf;border-radius:99px;overflow:hidden}
+.mfill{height:100%;border-radius:99px}
+.mval{width:96px;text-align:right;font-size:.8rem;color:var(--muted)}
+.mval b{color:var(--spice)}
+.adj{font-size:.8rem;background:#f4ecdd;border-radius:10px;padding:.45rem .7rem;margin-top:.5rem;color:#6b4e1e}
