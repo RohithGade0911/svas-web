@@ -81,3 +81,22 @@ ol.steps li{margin-bottom:.3rem}
 .close{float:right;border:none;background:none;font-size:1.4rem;cursor:pointer;color:var(--muted)}
 .foot{text-align:center;color:var(--muted);font-size:.75rem;padding:1.5rem 1rem 2.5rem}
 .empty{color:var(--muted);padding:1rem;text-align:center}
+
+/* plan v2 — slots, plates, components, refresh */
+.slot-block{border-top:1px solid var(--line)}
+.slot-label{font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:.45rem .9rem .1rem;font-weight:600}
+.slot-items{padding:0 .5rem .4rem}
+.comp{display:flex;align-items:center;gap:.6rem;padding:.45rem .4rem;border-bottom:1px dashed var(--line)}
+.comp:last-child{border-bottom:none}
+.comp .cinfo{flex:1;min-width:0}
+.comp .nm{font-weight:600;font-size:.92rem}
+.comp .nat{font-family:'Noto Sans Telugu','Noto Sans Gurmukhi',sans-serif;color:var(--curry);font-size:.82rem}
+.comp .por{font-size:.74rem;color:var(--muted)}
+.comp .cmac{font-size:.74rem;color:var(--muted);text-align:right;white-space:nowrap;line-height:1.35}
+.comp .cact{display:flex;gap:.25rem;flex:none}
+.rf{border:1px solid var(--line);background:#fff;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:.95rem;color:var(--curry);line-height:1;padding:0}
+.rf:hover{border-color:var(--turmeric);background:#fbf3e2}
+.rf.det{color:var(--muted)}
+.edited{color:var(--chilli);font-size:.7rem;font-weight:600}
+ul.ing li{margin-bottom:.2rem}
+ul.ing .ing-rf{width:24px;height:24px;font-size:.8rem;vertical-align:middle;margin-left:.2rem}

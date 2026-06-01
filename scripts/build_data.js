@@ -1,9 +1,9 @@
-// Bundles the Svas food database (CSV) into a single static data.js for the website.
-// Run locally:  node scripts/build_data.js   ->  writes ../data.js
-// The browser then has the whole dataset offline — no server needed (GitHub Pages friendly).
+// Bundles the Svas food database into a static data.js for the website.
+// v2: household portions + plate roles + ingredient substitution groups +
+// per-100g ingredient macros (so the browser can recompute when an ingredient is swapped).
+//   node scripts/build_data.js   ->  ../data.js
 const fs = require('fs');
 const path = require('path');
-
 const DB = path.join(__dirname, '../../food-database');
 
 function parseCSV(file) {
@@ -20,36 +20,41 @@ function parseCSV(file) {
 const NUM = v => { const n=parseFloat(v); return isNaN(n)?0:+n; };
 
 const catalogue = parseCSV(path.join(DB,'dishes_mvp.csv'));
-const macros    = parseCSV(path.join(DB,'layer3-dishes/dish_macros.csv'));
 const recipes   = parseCSV(path.join(DB,'layer2-recipes/dish_recipes.csv'));
 const dingr     = parseCSV(path.join(DB,'layer2-recipes/dish_ingredients.csv'));
 const dsteps    = parseCSV(path.join(DB,'layer2-recipes/dish_steps.csv'));
+const portions  = parseCSV(path.join(DB,'layer2-recipes/dish_portions.csv'));
 const ingMaster = parseCSV(path.join(DB,'layer1-ingredients/ingredients.csv'));
+const subsRows  = parseCSV(path.join(DB,'layer2-recipes/ingredient_substitutions.csv'));
 
-const ingName = {}; ingMaster.forEach(i => ingName[i.ingredient_id] = i.display_name);
-const macroBy = {}; macros.forEach(m => macroBy[m.dish_id] = m);
+// per-100g ingredient macro table (browser recomputes dish macros on swap from this)
+const ingredients = {};
+ingMaster.forEach(i => ingredients[i.ingredient_id] = {
+  name: i.display_name, kcal: NUM(i.kcal_per_100g), p: NUM(i.protein_g), f: NUM(i.fat_g),
+  c: NUM(i.carb_g), fib: NUM(i.fiber_g), na: NUM(i.sodium_mg)
+});
+const ingName = id => (ingredients[id] ? ingredients[id].name : id);
+
 const recipeBy = {}; recipes.forEach(r => recipeBy[r.dish_id] = r);
-const ingrBy = {}; dingr.forEach(r => (ingrBy[r.dish_id]=ingrBy[r.dish_id]||[]).push({name: ingName[r.ingredient_id]||r.ingredient_id, grams: NUM(r.grams)}));
-const stepsBy = {}; dsteps.forEach(r => (stepsBy[r.dish_id]=stepsBy[r.dish_id]||[]).push({n: NUM(r.step_no), t: r.text}));
+const portBy   = {}; portions.forEach(p => portBy[p.dish_id] = p);
+const ingrBy = {}; dingr.forEach(r => (ingrBy[r.dish_id]=ingrBy[r.dish_id]||[]).push({ id:r.ingredient_id, name: ingName(r.ingredient_id), g: NUM(r.grams) }));
+const stepsBy = {}; dsteps.forEach(r => (stepsBy[r.dish_id]=stepsBy[r.dish_id]||[]).push({ n:NUM(r.step_no), t:r.text }));
 for (const k in stepsBy) stepsBy[k].sort((a,b)=>a.n-b.n);
 
+const subs = {}; subsRows.forEach(s => subs[s.group] = s.members_healthiest_first.split(';').map(x=>x.trim()).filter(Boolean));
+
 const dishes = catalogue.map(d => {
-  const m = macroBy[d.dish_id] || {};
-  const r = recipeBy[d.dish_id] || {};
+  const r = recipeBy[d.dish_id] || {}, p = portBy[d.dish_id] || {};
   return {
-    id: d.dish_id, name: d.display_name, native: d.native_name,
-    cuisine: d.cuisine, region: d.sub_region, meal: d.meal_type, diet: d.diet_type,
-    budget: d.budget_tier, protein_source: d.protein_source, health: d.health_tags,
-    source: d.recipe_source,
-    servings: NUM(r.servings), serving_g: NUM(m.serving_g), prep_min: NUM(r.prep_min), cook_min: NUM(r.cook_min),
-    kcal: NUM(m.kcal), protein: NUM(m.protein_g), fat: NUM(m.fat_g), carb: NUM(m.carb_g), fiber: NUM(m.fiber_g),
-    kcal100: NUM(m.kcal_100g), sodium: NUM(m.sodium_mg), potassium: NUM(m.potassium_mg),
-    calcium: NUM(m.calcium_mg), iron: NUM(m.iron_mg), protein_pct: NUM(m.protein_pct_kcal),
-    allergens: (m.allergens||'').split(';').map(s=>s.trim()).filter(Boolean),
+    id:d.dish_id, name:d.display_name, native:d.native_name, cuisine:d.cuisine, region:d.sub_region,
+    meal:d.meal_type, diet:d.diet_type, budget:d.budget_tier, health:d.health_tags, source:d.recipe_source,
+    servings:NUM(r.servings), cooked_g:NUM(r.cooked_g), prep_min:NUM(r.prep_min), cook_min:NUM(r.cook_min),
+    unit:p.unit||'katori', gpu:NUM(p.grams_per_unit)||130, defU:NUM(p.default_units)||1,
+    minU:NUM(p.min_units)||0.5, maxU:NUM(p.max_units)||2, role:p.plate_role||'sabzi',
     ingredients: ingrBy[d.dish_id] || [], steps: (stepsBy[d.dish_id]||[]).map(s=>s.t),
   };
 });
 
-const out = 'window.SVAS_DATA = ' + JSON.stringify({ generated: 'static', count: dishes.length, dishes }, null, 0) + ';\n';
+const out = 'window.SVAS_DATA = ' + JSON.stringify({ count:dishes.length, ingredients, subs, dishes }, null, 0) + ';\n';
 fs.writeFileSync(path.join(__dirname, '../data.js'), out);
-console.log(`Wrote data.js with ${dishes.length} dishes (${(out.length/1024).toFixed(0)} KB).`);
+console.log(`Wrote data.js: ${dishes.length} dishes, ${Object.keys(ingredients).length} ingredients, ${Object.keys(subs).length} sub-groups (${(out.length/1024).toFixed(0)} KB).`);

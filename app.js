@@ -1,198 +1,254 @@
-/* Svas review build — client-side meal engine + dish database/review.
-   All data is in window.SVAS_DATA (data.js). Runs fully offline (GitHub Pages friendly). */
+/* Svas review build v2 — client-side engine with household portions, combo-plates,
+   dish-swap (↻) and ingredient-swap (↻ + live macro recompute). Fully offline. */
 (function () {
-  const DISHES = (window.SVAS_DATA && window.SVAS_DATA.dishes) || [];
+  const D = window.SVAS_DATA || {};
+  const ING = D.ingredients || {}, SUBS = D.subs || {}, DISHES = D.dishes || [];
 
-  /* ---------- tabs ---------- */
-  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
-  }));
+  /* substitution reverse map */
+  const GROUP_OF = {};
+  Object.entries(SUBS).forEach(([g, arr]) => arr.forEach(id => { if (!(id in GROUP_OF)) GROUP_OF[id] = g; }));
+  const hasAlt = id => GROUP_OF[id] && SUBS[GROUP_OF[id]].length > 1;
+  const nextAlt = id => { const g = GROUP_OF[id]; if (!g) return id; const a = SUBS[g]; return a[(a.indexOf(id) + 1) % a.length]; };
 
-  /* ================= MEAL ENGINE ================= */
-  const ACT = { sedentary:1.2, light:1.375, moderate:1.55, active:1.725 };
-  const BUDGET = { low:1, medium:2, high:3 };
-  const DIET = { veg:0, egg:1, 'non-veg':2 };
-  const SLOT = { breakfast:0.25, lunch:0.35, snack:0.15, dinner:0.25 };
+  /* allergens (derived from ingredients so swaps update them) */
+  const ALLERGEN = {
+    dairy:['milk_buffalo','milk_cow','low_fat_milk','paneer','khoa','curd','buttermilk','butter','ghee','cream'],
+    gluten:['wheat_atta','wheat_maida','wheat_semolina_rava','broken_wheat'], peanut:['groundnut'],
+    treenut:['cashew','coconut_fresh','coconut_dry'], sesame:['sesame'],
+    egg:['egg_whole','egg_white','egg_yolk'], fish:['fish_rohu','fish_catla'], shellfish:['prawns'],
+    soy:['soya_bean','soya_chunks','tofu'], mustard:['mustard_seeds','mustard_oil','mustard_leaves'],
+  };
+  const ALLERGEN_OF = {};
+  Object.entries(ALLERGEN).forEach(([a, ids]) => ids.forEach(id => (ALLERGEN_OF[id] = ALLERGEN_OF[id] || []).push(a)));
+  const allergensOf = ings => { const s = new Set(); ings.forEach(x => (ALLERGEN_OF[x.id] || []).forEach(a => s.add(a))); return [...s]; };
 
-  function targets(u) {
-    const bmr = 10*u.weight + 6.25*u.height - 5*u.age + (u.sex==='male'?5:-161);
-    let tdee = bmr * ACT[u.activity];
-    if (u.goal==='lose') tdee -= 500; else if (u.goal==='gain') tdee += 400;
-    // veg plans can't realistically hit 1.8 g/kg from dal/rice — cap it (engine finding #1)
-    let perKg = u.goal==='gain'?2.0 : u.goal==='lose'?1.8 : 1.6;
-    if (u.diet==='veg') perKg = Math.min(perKg, 1.4);
-    const protein = perKg*u.weight, fat = tdee*0.25/9, carb = (tdee - protein*4 - fat*9)/4;
-    return { kcal:Math.round(tdee), protein:Math.round(protein), fat:Math.round(fat), carb:Math.round(carb) };
-  }
+  /* macro helpers */
+  const cloneIngs = d => d.ingredients.map(x => ({ id: x.id, name: x.name, g: x.g }));
+  function totals(ings) { let t = { kcal:0,p:0,f:0,c:0,fib:0,na:0 };
+    ings.forEach(x => { const m = ING[x.id]; if (!m) return; const k = x.g/100;
+      t.kcal+=k*m.kcal; t.p+=k*m.p; t.f+=k*m.f; t.c+=k*m.c; t.fib+=k*m.fib; t.na+=k*(m.na||0); }); return t; }
+  function unitMacros(dish, ings, units) { const t = totals(ings); const f = dish.cooked_g ? dish.gpu*units/dish.cooked_g : 0;
+    return { kcal:Math.round(t.kcal*f), p:+(t.p*f).toFixed(1), fat:+(t.f*f).toFixed(1), c:+(t.c*f).toFixed(1), fib:+(t.fib*f).toFixed(1), na:Math.round(t.na*f), grams:Math.round(dish.gpu*units) }; }
+  const round5 = u => Math.round(u*2)/2;
+  function unitsForKcal(dish, ings, targetKcal) { const t = totals(ings);
+    const perU = dish.cooked_g ? t.kcal*dish.gpu/dish.cooked_g : 0;
+    if (perU <= 0) return dish.defU; return Math.max(dish.minU, Math.min(dish.maxU, round5(targetKcal/perU) || dish.defU)); }
+  function portionLabel(dish, u) { const pl = {piece:'pieces',cup:'cups',glass:'glasses',bowl:'bowls'};
+    if (u === 1) return '1 ' + dish.unit; const n = Number.isInteger(u) ? u : u.toFixed(1); return n + ' ' + (pl[dish.unit] || dish.unit); }
 
-  function eligible(m, u, slot) {
-    if (m.meal !== slot) return false;
-    const regionOk = u.regions.includes(m.region) ||
-      (m.region==='Andhra & Telangana' && (u.regions.includes('Andhra')||u.regions.includes('Telangana')));
-    if (!regionOk) return false;
-    if (DIET[m.diet] > DIET[u.diet]) return false;
-    if (BUDGET[m.budget] > BUDGET[u.budget]) return false;
-    if (u.allergies.some(a => m.allergens.includes(a))) return false;
-    if ((u.conditions.includes('diabetic')||u.conditions.includes('pcos')) && /sweet/.test(m.health)) return false;
-    if (u.conditions.includes('bp') && m.sodium > 600) return false;
+  /* eligibility */
+  const BUD = { low:1, medium:2, high:3 }, DIET = { veg:0, egg:1, 'non-veg':2 };
+  const regionOk = (d,u) => d.region==='All' || d.cuisine==='Both' || u.regions.includes(d.region) ||
+    (d.region==='Andhra & Telangana' && (u.regions.includes('Andhra')||u.regions.includes('Telangana')));
+  function eligible(d, u) {
+    if (!regionOk(d,u)) return false;
+    if (DIET[d.diet] > DIET[u.diet]) return false;
+    if (BUD[d.budget] > BUD[u.budget]) return false;
+    if (u.allergies.some(a => allergensOf(d.ingredients).includes(a))) return false;
+    if ((u.conditions.includes('diabetic')||u.conditions.includes('pcos')) && /sweet/.test(d.health)) return false;
+    if (u.conditions.includes('bp')) { const m = unitMacros(d, d.ingredients, d.defU); if (m.na > 700) return false; }
     return true;
   }
 
-  function fit(m, slotKcal, slotProtein) {
-    let f = Math.max(0.5, Math.min(2.5, slotKcal/(m.kcal||1)));
-    const kcalErr = Math.abs(m.kcal*f - slotKcal)/slotKcal;
-    const protErr = Math.abs(m.protein*f - slotProtein)/Math.max(slotProtein,1);
-    return { score: kcalErr + 0.7*protErr, f };
+  /* targets */
+  const ACT = { sedentary:1.2, light:1.375, moderate:1.55, active:1.725 };
+  const SLOT = { breakfast:0.25, lunch:0.35, snack:0.15, dinner:0.25 };
+  function targets(u) {
+    const bmr = 10*u.weight + 6.25*u.height - 5*u.age + (u.sex==='male'?5:-161);
+    let tdee = bmr*ACT[u.activity]; if (u.goal==='lose') tdee-=500; else if (u.goal==='gain') tdee+=400;
+    let perKg = u.goal==='gain'?2.0 : u.goal==='lose'?1.8 : 1.6; if (u.diet==='veg') perKg = Math.min(perKg, 1.4);
+    const protein = perKg*u.weight, fat = tdee*0.25/9, carb = (tdee - protein*4 - fat*9)/4;
+    return { kcal:Math.round(tdee), protein:Math.round(protein), fat:Math.round(fat), carb:Math.round(carb) };
+  }
+  const rng = seed => { let s=seed%2147483647; if(s<=0)s+=2147483646; return ()=>(s=s*16807%2147483647)/2147483647; };
+
+  /* build a component: a ranked pool of dishes for a role + chosen units */
+  function makeComp(u, roleFilter, slotKcal, rand, used, role) {
+    let pool = DISHES.filter(d => eligible(d,u) && roleFilter(d) && (used[d.id]||0) < 2);
+    if (!pool.length) pool = DISHES.filter(d => eligible(d,u) && roleFilter(d));
+    if (!pool.length) return null;
+    // rank by how close default-units kcal is to the share, with a little seeded jitter for variety
+    pool = pool.map(d => ({ d, fit: Math.abs(unitMacros(d, d.ingredients, d.defU).kcal - slotKcal) + rand()*40 }))
+               .sort((a,b)=>a.fit-b.fit).map(x=>x.d);
+    const dish = pool[0];
+    used[dish.id] = (used[dish.id]||0)+1;
+    return { role, pool, idx:0, dish, ings: cloneIngs(dish), units: unitsForKcal(dish, dish.ingredients, slotKcal), targetKcal: slotKcal };
   }
 
-  function rng(seed){ let s=seed%2147483647; if(s<=0)s+=2147483646; return ()=>(s=s*16807%2147483647)/2147483647; }
-
   function buildPlan(u) {
-    const T = targets(u), rand = rng(u.seed||((u.age*97+u.weight*13)|0)||42), used = {}, days = [];
-    for (let d=0; d<7; d++) {
-      const meals = {};
-      for (const slot of ['breakfast','lunch','snack','dinner']) {
-        const sk = T.kcal*SLOT[slot], sp = T.protein*SLOT[slot];
-        let c = DISHES.filter(m => eligible(m,u,slot) && (used[m.id]||0)<2);
-        if (!c.length) c = DISHES.filter(m => eligible(m,u,slot));
-        const scored = c.map(m => ({ m, ...fit(m,sk,sp) })).sort((a,b)=>a.score-b.score).slice(0,5);
-        if (!scored.length){ meals[slot]=null; continue; }
-        const p = scored[Math.floor(rand()*scored.length)];
-        used[p.m.id] = (used[p.m.id]||0)+1;
-        meals[slot] = { m:p.m, f:p.f,
-          kcal:Math.round(p.m.kcal*p.f), protein:+(p.m.protein*p.f).toFixed(0),
-          fat:+(p.m.fat*p.f).toFixed(0), carb:+(p.m.carb*p.f).toFixed(0) };
+    const T = targets(u), rand = rng(u.seed || ((u.age*131 + u.weight*17 + u.height)|0) || 42), used = {}, days = [];
+    const isVeg = u.diet === 'veg';
+    for (let day=0; day<7; day++) {
+      const slots = {};
+      // breakfast & snack: single complete/snack item
+      slots.breakfast = { kind:'single', items:[ makeComp(u, d=>d.meal==='breakfast', T.kcal*SLOT.breakfast, rand, used, 'meal') ].filter(Boolean) };
+      slots.snack     = { kind:'single', items:[ makeComp(u, d=>d.meal==='snack',     T.kcal*SLOT.snack,     rand, used, 'snack') ].filter(Boolean) };
+      // lunch & dinner: thali (grain + dal/main + sabzi [+curd]) OR occasional one-dish complete
+      for (const slot of ['lunch','dinner']) {
+        const sk = T.kcal*SLOT[slot];
+        const oneDish = rand() < 0.22;
+        if (oneDish) {
+          const c = makeComp(u, d=>(d.meal===slot)&&d.role==='complete', sk, rand, used, 'meal');
+          if (c) { slots[slot] = { kind:'single', items:[c] }; continue; }
+        }
+        const items = [];
+        const grain = makeComp(u, d=>d.role==='grain', sk*0.45, rand, used, 'grain');
+        const prot  = isVeg ? makeComp(u, d=>d.role==='dal', sk*0.35, rand, used, 'dal')
+                            : (makeComp(u, d=>d.role==='main', sk*0.40, rand, used, 'main') || makeComp(u, d=>d.role==='dal', sk*0.35, rand, used, 'dal'));
+        const sabzi = makeComp(u, d=>d.role==='sabzi', sk*0.20, rand, used, 'sabzi');
+        [grain, prot, sabzi].forEach(c => c && items.push(c));
+        if (!u.allergies.includes('dairy')) { const curd = DISHES.find(d=>d.id==='base_curd');
+          if (curd && eligible(curd,u)) items.push({ role:'side', pool:[curd], idx:0, dish:curd, ings:cloneIngs(curd), units:1, targetKcal:0 }); }
+        slots[slot] = items.length ? { kind:'plate', items } : { kind:'single', items:[ makeComp(u, d=>d.meal===slot, sk, rand, used, 'meal') ].filter(Boolean) };
       }
-      const tot = ['breakfast','lunch','snack','dinner'].reduce((a,s)=>{const x=meals[s];if(x){a.kcal+=x.kcal;a.protein+=x.protein;a.fat+=x.fat;a.carb+=x.carb;}return a;},{kcal:0,protein:0,fat:0,carb:0});
-      days.push({ meals, tot });
+      days.push({ slots });
     }
     return { T, days };
   }
 
-  function readForm(form) {
-    const fd = new FormData(form);
-    const multi = n => fd.getAll(n);
-    return {
-      sex:fd.get('sex'), age:+fd.get('age'), weight:+fd.get('weight'), height:+fd.get('height'),
-      activity:fd.get('activity'), goal:fd.get('goal'), diet:fd.get('diet'), budget:fd.get('budget'),
-      regions:multi('region'), conditions:multi('cond'), allergies:multi('allergy'),
-    };
+  /* ---------- rendering ---------- */
+  function dayTotals(day) { let t={kcal:0,p:0,c:0,f:0};
+    ['breakfast','lunch','snack','dinner'].forEach(s => (day.slots[s].items||[]).forEach(c => { const m=unitMacros(c.dish,c.ings,c.units); t.kcal+=m.kcal;t.p+=m.p;t.c+=m.c;t.f+=m.fat; })); return t; }
+
+  function compHTML(c, di, slot, ci) {
+    const m = unitMacros(c.dish, c.ings, c.units);
+    const swapped = c.ings.some((x,i)=>x.id!==c.dish.ingredients[i].id);
+    return '<div class="comp">'+
+      '<div class="cinfo">'+
+        '<div class="nm">'+c.dish.name+(swapped?' <span class="edited">· edited</span>':'')+'</div>'+
+        '<div class="nat">'+(c.dish.native||'')+'</div>'+
+        '<div class="por">'+portionLabel(c.dish,c.units)+' · ~'+m.grams+' g'+'</div>'+
+      '</div>'+
+      '<div class="cmac">~'+m.kcal+' kcal<br>'+m.p+'g P</div>'+
+      '<div class="cact">'+
+        (c.pool.length>1?'<button class="rf" title="Swap dish" data-a="dish" data-d="'+di+'" data-s="'+slot+'" data-c="'+ci+'">↻</button>':'')+
+        '<button class="rf det" title="Ingredients / swap ingredient" data-a="detail" data-d="'+di+'" data-s="'+slot+'" data-c="'+ci+'">⋯</button>'+
+      '</div></div>';
   }
 
-  document.getElementById('profile-form').addEventListener('submit', e => {
-    e.preventDefault();
-    const u = readForm(e.target);
-    const out = document.getElementById('plan-output');
-    if (!u.regions.length) { out.innerHTML = '<div class="card empty">Please pick at least one cuisine.</div>'; return; }
-    const { T, days } = buildPlan(u);
-    const SL = ['breakfast','lunch','snack','dinner'];
-    let html = '<div class="card"><h2>Your 7-day plan</h2>'+
-      '<div class="target-bar"><span class="pill">🎯 '+T.kcal+' kcal/day</span><span class="pill">'+T.protein+'g protein</span><span class="pill">'+T.carb+'g carb</span><span class="pill">'+T.fat+'g fat</span></div>';
-    days.forEach((day,i) => {
-      html += '<div class="day"><div class="day-head">Day '+(i+1)+
-        '<span class="totals">'+day.tot.kcal+' kcal · '+day.tot.protein+'g P · '+day.tot.carb+'g C · '+day.tot.fat+'g F</span></div>';
-      SL.forEach(s => {
-        const x = day.meals[s];
-        html += '<div class="meal"><div class="slot">'+s+'</div>'+
-          (x ? '<div class="dish"><div class="nm">'+x.m.name+(x.f!==1?' <span class="muted">×'+x.f.toFixed(1)+' serving</span>':'')+'</div><div class="nat">'+x.m.native+'</div></div>'+
-               '<div class="mac">'+x.kcal+' kcal<br>'+x.protein+'g P</div>'
-             : '<div class="dish muted">No matching dish — widen filters</div>')+
-          '</div>';
+  let PLAN = null, U = null;
+  function renderPlan() {
+    const out = document.getElementById('plan-output'); const T = PLAN.T;
+    let h = '<div class="card"><h2>Your 7-day plan</h2>'+
+      '<div class="target-bar"><span class="pill">🎯 '+T.kcal+' kcal/day</span><span class="pill">'+T.protein+'g protein</span><span class="pill">'+T.carb+'g carb</span><span class="pill">'+T.fat+'g fat</span></div>'+
+      '<p class="muted" style="font-size:.78rem">Portions in everyday measures (pieces, cups, katori, glass). ↻ swaps the dish; ⋯ opens ingredients where you can swap an ingredient (e.g. oil → olive oil). Macros are approximate.</p>';
+    PLAN.days.forEach((day, di) => {
+      const t = dayTotals(day);
+      h += '<div class="day"><div class="day-head">Day '+(di+1)+'<span class="totals">~'+t.kcal+' kcal · '+t.p.toFixed(0)+'g P · '+t.c.toFixed(0)+'g C · '+t.f.toFixed(0)+'g F</span></div>';
+      ['breakfast','lunch','snack','dinner'].forEach(slot => {
+        const sl = day.slots[slot];
+        h += '<div class="slot-block"><div class="slot-label">'+slot+(sl.kind==='plate'?' · thali':'')+'</div><div class="slot-items">';
+        if (sl.items.length) sl.items.forEach((c,ci)=> h += compHTML(c, di, slot, ci));
+        else h += '<div class="comp muted">No matching dish — widen filters</div>';
+        h += '</div></div>';
       });
-      html += '</div>';
+      h += '</div>';
     });
-    html += '<p class="muted" style="font-size:.78rem">Portions auto-scaled to hit each meal\'s calorie share. Macros computed from IFCT 2017 — pending dietitian validation.</p></div>';
-    out.innerHTML = html;
-    out.scrollIntoView({ behavior:'smooth', block:'start' });
-  });
-
-  /* ================= DISH DATABASE / REVIEW ================= */
-  const REVIEW_KEY = 'svas_review_v1';
-  const review = JSON.parse(localStorage.getItem(REVIEW_KEY) || '{}');
-  const saveReview = () => localStorage.setItem(REVIEW_KEY, JSON.stringify(review));
-  const stat = id => (review[id] && review[id].status) || 'Pending';
-
-  document.getElementById('db-count').textContent = DISHES.length;
-
-  function filtered() {
-    const q = document.getElementById('db-search').value.toLowerCase();
-    const r = document.getElementById('f-region').value;
-    const me = document.getElementById('f-meal').value;
-    const di = document.getElementById('f-diet').value;
-    const st = document.getElementById('f-status').value;
-    return DISHES.filter(d =>
-      (!q || d.name.toLowerCase().includes(q) || (d.native||'').includes(q)) &&
-      (!r || d.region===r) && (!me || d.meal===me) && (!di || d.diet===di) &&
-      (!st || stat(d.id)===st));
+    h += '</div>'; out.innerHTML = h;
+    out.querySelectorAll('.rf').forEach(b => b.addEventListener('click', onPlanAction));
   }
 
-  function renderList() {
-    const list = document.getElementById('db-list');
-    const ds = filtered();
-    if (!ds.length){ list.innerHTML = '<div class="empty">No dishes match.</div>'; return; }
-    list.innerHTML = ds.map(d => {
-      const s = stat(d.id);
-      return '<div class="dish-card" data-id="'+d.id+'">'+
-        '<div class="nm">'+d.name+'<span class="badge b-'+s.replace(' ','')+'">'+s+'</span></div>'+
-        '<div class="nat">'+d.native+'</div>'+
-        '<div class="meta">'+d.region+' · '+d.meal+' · '+d.diet+' · ₹'+({low:1,medium:2,high:3}[d.budget])+'</div>'+
-        '<div class="mac">'+d.kcal+' kcal · '+d.protein+'g P · '+d.carb+'g C · '+d.fat+'g F</div>'+
-        '<div class="tags">'+d.health.split(';').map(t=>t.trim()).filter(Boolean).map(t=>'<span>'+t+'</span>').join('')+'</div>'+
-        '</div>';
-    }).join('');
-    list.querySelectorAll('.dish-card').forEach(c => c.addEventListener('click', () => openDish(c.dataset.id)));
+  function onPlanAction(e) {
+    const b = e.currentTarget, di=+b.dataset.d, slot=b.dataset.s, ci=+b.dataset.c;
+    const c = PLAN.days[di].slots[slot].items[ci];
+    if (b.dataset.a === 'dish') { c.idx = (c.idx+1)%c.pool.length; c.dish = c.pool[c.idx]; c.ings = cloneIngs(c.dish);
+      c.units = c.targetKcal ? unitsForKcal(c.dish, c.dish.ingredients, c.targetKcal) : c.dish.defU; renderPlan(); }
+    else openModal(c.dish, c); // ⋯ detail with ingredient swap bound to this plan component
   }
 
-  function openDish(id) {
-    const d = DISHES.find(x => x.id===id); if (!d) return;
-    const r = review[id] || { status:'Pending', notes:'' };
+  /* ---------- modal: ingredients + ingredient-swap + recompute ---------- */
+  function openModal(dish, comp) {
+    const ings = comp ? comp.ings : cloneIngs(dish);   // edit comp's copy if from plan, else transient
+    const units = comp ? comp.units : dish.defU;
     const box = document.getElementById('modal-box');
-    box.innerHTML =
-      '<button class="close" id="m-close">×</button>'+
-      '<h3>'+d.name+'</h3><div class="nat" style="color:#2D6A2F;font-family:\'Noto Sans Telugu\',\'Noto Sans Gurmukhi\',sans-serif">'+d.native+'</div>'+
-      '<div class="kv">'+d.region+' · '+d.meal+' · '+d.diet+' · serves '+d.servings+' · ~'+d.serving_g+'g/serving · '+(d.prep_min+d.cook_min)+' min</div>'+
-      '<div class="macro-grid">'+
-        '<div><b>'+d.kcal+'</b><small>kcal</small></div><div><b>'+d.protein+'g</b><small>protein</small></div>'+
-        '<div><b>'+d.carb+'g</b><small>carb</small></div><div><b>'+d.fat+'g</b><small>fat</small></div></div>'+
-      '<div class="kv">Fiber '+d.fiber+'g · Sodium '+d.sodium+'mg · Calcium '+d.calcium+'mg · Iron '+d.iron+'mg · '+d.protein_pct+'% kcal from protein</div>'+
-      '<div class="kv">Per 100g: '+d.kcal100+' kcal'+(d.allergens.length?' · allergens: '+d.allergens.join(', '):' · no flagged allergens')+'</div>'+
-      '<b>Ingredients</b><ul class="ing">'+d.ingredients.map(i=>'<li>'+i.name+' — '+i.grams+' g</li>').join('')+'</ul>'+
-      '<b>Method</b><ol class="steps">'+d.steps.map(s=>'<li>'+s+'</li>').join('')+'</ol>'+
-      '<div class="kv">Source: '+d.source+'</div>'+
-      '<div class="review-box"><b>Dietitian review</b>'+
-        '<div class="row" style="margin:.5rem 0">'+
-          '<select id="m-status"><option'+(r.status==='Pending'?' selected':'')+'>Pending</option>'+
-          '<option'+(r.status==='Approved'?' selected':'')+'>Approved</option>'+
-          '<option'+(r.status==='Needs fix'?' selected':'')+'>Needs fix</option></select></div>'+
-        '<textarea id="m-notes" placeholder="Notes (e.g. reduce oil to 20g, portion looks high)…">'+(r.notes||'')+'</textarea>'+
-        '<div class="row" style="margin-top:.5rem"><button class="btn primary" id="m-save">Save review</button></div>'+
-      '</div>';
-    document.getElementById('modal').classList.remove('hidden');
-    document.getElementById('m-close').onclick = closeModal;
-    document.getElementById('m-save').onclick = () => {
-      review[id] = { status:document.getElementById('m-status').value, notes:document.getElementById('m-notes').value };
-      saveReview(); closeModal(); renderList();
+    const render = () => {
+      const m = unitMacros(dish, ings, units), al = allergensOf(ings);
+      box.innerHTML =
+        '<button class="close" id="m-close">×</button>'+
+        '<h3>'+dish.name+'</h3><div class="nat" style="color:#2D6A2F">'+(dish.native||'')+'</div>'+
+        '<div class="kv">'+dish.region+' · '+dish.meal+' · '+dish.diet+' · '+portionLabel(dish,units)+' (~'+m.grams+' g) · '+(dish.prep_min+dish.cook_min)+' min</div>'+
+        '<div class="macro-grid"><div><b>~'+m.kcal+'</b><small>kcal</small></div><div><b>'+m.p+'g</b><small>protein</small></div>'+
+          '<div><b>'+m.c+'g</b><small>carb</small></div><div><b>'+m.fat+'g</b><small>fat</small></div></div>'+
+        '<div class="kv">Fiber '+m.fib+'g · Sodium '+m.na+'mg'+(al.length?' · allergens: '+al.join(', '):' · no flagged allergens')+' <span class="muted">(per '+portionLabel(dish,units)+')</span></div>'+
+        '<b>Ingredients</b> <span class="muted" style="font-size:.72rem">— ↻ swaps to a healthier/alt ingredient</span>'+
+        '<ul class="ing">'+ ings.map((x,i)=> '<li>'+x.name+' — '+x.g+' g'+
+            (hasAlt(x.id)?' <button class="rf ing-rf" data-i="'+i+'" title="Swap ingredient">↻</button>':'')+
+            (x.id!==dish.ingredients[i].id?' <span class="edited">(was '+dish.ingredients[i].name+')</span>':'')+'</li>').join('')+'</ul>'+
+        '<b>Method</b><ol class="steps">'+dish.steps.map(s=>'<li>'+s+'</li>').join('')+'</ol>'+
+        '<div class="kv">Source: '+dish.source+'</div>'+ reviewBoxHTML(dish.id);
+      box.querySelector('#m-close').onclick = closeModal;
+      box.querySelectorAll('.ing-rf').forEach(btn => btn.addEventListener('click', () => {
+        const i = +btn.dataset.i; ings[i].id = nextAlt(ings[i].id); ings[i].name = ING[ings[i].id] ? ING[ings[i].id].name : ings[i].id;
+        render(); if (comp) renderPlan(); // reflect swap back into the plan
+      }));
+      bindReview(dish.id, box);
     };
+    render();
+    document.getElementById('modal').classList.remove('hidden');
   }
   function closeModal(){ document.getElementById('modal').classList.add('hidden'); }
   document.getElementById('modal').addEventListener('click', e => { if (e.target.id==='modal') closeModal(); });
 
-  ['db-search','f-region','f-meal','f-diet','f-status'].forEach(id =>
-    document.getElementById(id).addEventListener('input', renderList));
-
-  document.getElementById('export-btn').addEventListener('click', () => {
-    const esc = s => '"'+String(s==null?'':s).replace(/"/g,'""')+'"';
-    const rows = [['dish_id','name','region','meal','diet','kcal','protein_g','fat_g','carb_g','review_status','review_notes']];
-    DISHES.forEach(d => { const r = review[d.id]||{};
-      rows.push([d.id,d.name,d.region,d.meal,d.diet,d.kcal,d.protein,d.fat,d.carb,r.status||'Pending',r.notes||'']); });
-    const csv = rows.map(r => r.map(esc).join(',')).join('\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-    a.download = 'svas_dietitian_review.csv'; a.click();
+  /* ---------- form ---------- */
+  function readForm(form) { const fd = new FormData(form); const m = n => fd.getAll(n);
+    return { sex:fd.get('sex'), age:+fd.get('age'), weight:+fd.get('weight'), height:+fd.get('height'),
+      activity:fd.get('activity'), goal:fd.get('goal'), diet:fd.get('diet'), budget:fd.get('budget'),
+      regions:m('region'), conditions:m('cond'), allergies:m('allergy') }; }
+  document.getElementById('profile-form').addEventListener('submit', e => {
+    e.preventDefault(); U = readForm(e.target);
+    const out = document.getElementById('plan-output');
+    if (!U.regions.length) { out.innerHTML = '<div class="card empty">Please pick at least one cuisine.</div>'; return; }
+    PLAN = buildPlan(U); renderPlan(); out.scrollIntoView({ behavior:'smooth', block:'start' });
   });
 
+  /* ---------- tabs ---------- */
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); document.getElementById('tab-'+t.dataset.tab).classList.add('active');
+  }));
+
+  /* ================= DISH DATABASE / REVIEW ================= */
+  const RK = 'svas_review_v1';
+  const review = JSON.parse(localStorage.getItem(RK) || '{}');
+  const saveReview = () => localStorage.setItem(RK, JSON.stringify(review));
+  const stat = id => (review[id] && review[id].status) || 'Pending';
+  function reviewBoxHTML(id){ const r = review[id]||{status:'Pending',notes:''};
+    return '<div class="review-box"><b>Dietitian review</b><div class="row" style="margin:.5rem 0">'+
+      '<select id="m-status"><option'+(r.status==='Pending'?' selected':'')+'>Pending</option>'+
+      '<option'+(r.status==='Approved'?' selected':'')+'>Approved</option>'+
+      '<option'+(r.status==='Needs fix'?' selected':'')+'>Needs fix</option></select></div>'+
+      '<textarea id="m-notes" placeholder="Notes (e.g. portion ok, swap oil, less ghee)…">'+(r.notes||'')+'</textarea>'+
+      '<div class="row" style="margin-top:.5rem"><button class="btn primary" id="m-save">Save review</button></div></div>'; }
+  function bindReview(id, box){ const s=box.querySelector('#m-save'); if(!s) return;
+    s.onclick = () => { review[id] = { status:box.querySelector('#m-status').value, notes:box.querySelector('#m-notes').value }; saveReview(); renderList(); }; }
+
+  const elCount = document.getElementById('db-count'); if (elCount) elCount.textContent = DISHES.length;
+  function filtered() {
+    const q=(document.getElementById('db-search').value||'').toLowerCase(), r=document.getElementById('f-region').value,
+      me=document.getElementById('f-meal').value, di=document.getElementById('f-diet').value, st=document.getElementById('f-status').value;
+    return DISHES.filter(d => (!q || d.name.toLowerCase().includes(q) || (d.native||'').includes(q)) &&
+      (!r || d.region===r) && (!me || d.meal===me) && (!di || d.diet===di) && (!st || stat(d.id)===st));
+  }
+  function renderList() {
+    const list = document.getElementById('db-list'); const ds = filtered();
+    if (!ds.length) { list.innerHTML = '<div class="empty">No dishes match.</div>'; return; }
+    list.innerHTML = ds.map(d => { const s=stat(d.id); const m=unitMacros(d, d.ingredients, d.defU);
+      return '<div class="dish-card" data-id="'+d.id+'"><div class="nm">'+d.name+'<span class="badge b-'+s.replace(' ','')+'">'+s+'</span></div>'+
+        '<div class="nat">'+(d.native||'')+'</div>'+
+        '<div class="meta">'+d.region+' · '+d.meal+' · '+d.diet+' · '+portionLabel(d,d.defU)+'</div>'+
+        '<div class="mac">~'+m.kcal+' kcal · '+m.p+'g P · '+m.c+'g C · '+m.fat+'g F <span class="muted">/ '+portionLabel(d,d.defU)+'</span></div>'+
+        '<div class="tags">'+(d.health||'').split(';').map(t=>t.trim()).filter(Boolean).map(t=>'<span>'+t+'</span>').join('')+'</div></div>'; }).join('');
+    list.querySelectorAll('.dish-card').forEach(c => c.addEventListener('click', () => { const d=DISHES.find(x=>x.id===c.dataset.id); openModal(d, null); }));
+  }
+  ['db-search','f-region','f-meal','f-diet','f-status'].forEach(id => { const el=document.getElementById(id); if(el) el.addEventListener('input', renderList); });
+  document.getElementById('export-btn').addEventListener('click', () => {
+    const esc = s => '"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+    const rows = [['dish_id','name','region','meal','diet','portion','kcal','protein_g','review_status','review_notes']];
+    DISHES.forEach(d => { const r=review[d.id]||{}; const m=unitMacros(d,d.ingredients,d.defU);
+      rows.push([d.id,d.name,d.region,d.meal,d.diet,portionLabel(d,d.defU),m.kcal,m.p,r.status||'Pending',r.notes||'']); });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rows.map(r=>r.map(esc).join(',')).join('\n')],{type:'text/csv'}));
+    a.download = 'svas_dietitian_review.csv'; a.click();
+  });
   renderList();
 })();
