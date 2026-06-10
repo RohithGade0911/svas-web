@@ -116,9 +116,16 @@
     if (lowGI) perKg = Math.max(perKg, 1.6);          // protein aids satiety/insulin response
     if (u.diet==='veg') perKg = Math.min(perKg, 1.4); // realistic ceiling for veg plans
     const fatPct = lowGI ? 0.30 : 0.25;               // diabetic/PCOS: more fat, fewer carbs
-    const protein = perKg*u.weight, fat = kcal*fatPct/9, carb = Math.max(0,(kcal - protein*4 - fat*9)/4);
+    // Feasibility cap: per-kg protein on a deep deficit can demand more protein
+    // than real meals deliver (catalog ceiling ≈29% of kcal non-veg, ≈19% veg).
+    // Cap at 30% of the kcal budget (20% veg), floored at the ICMR RDA 0.83 g/kg.
+    const ppCap = u.diet==='veg' ? 0.20 : 0.30;
+    const byKg = perKg*u.weight;
+    const protein = Math.max(Math.min(byKg, kcal*ppCap/4), 0.83*u.weight);
+    const fat = kcal*fatPct/9, carb = Math.max(0,(kcal - protein*4 - fat*9)/4);
     return { bmr:Math.round(bmr), tdee:Math.round(tdee), kcal:Math.round(kcal),
-      protein:Math.round(protein), fat:Math.round(fat), carb:Math.round(carb), fatPct, lowGI };
+      protein:Math.round(protein), fat:Math.round(fat), carb:Math.round(carb), fatPct, lowGI,
+      proteinCapped: Math.round(protein) < Math.round(byKg) };
   }
   const rng = seed => { let s=seed%2147483647; if(s<=0)s+=2147483646; return ()=>(s=s*16807%2147483647)/2147483647; };
 
@@ -362,6 +369,7 @@
       '<div class="muted" style="font-size:.8rem;margin-bottom:.9rem">BMR '+T.bmr+' · TDEE '+T.tdee+' · '+goalNote+'</div>'+
       bar('Protein',T.protein,pKcal,'#2D6A2F')+bar('Carbs',T.carb,cKcal,'#E8A020')+bar('Fat',T.fat,fKcal,'#C1440E')+
       (conds? '<div class="adj">⚖ Targets &amp; dishes adjusted for: <b>'+conds+'</b>'+(T.lowGI?' — more protein, fewer carbs':'')+'</div>':'')+
+      (T.proteinCapped? '<div class="adj">🥚 Protein set to the <b>realistic maximum</b> for your calorie budget — real meals can\'t pack more in.</div>':'')+
       (u.allergies.length? '<div class="adj">🚫 Avoiding: <b>'+u.allergies.join(', ')+'</b></div>':'')+
       '<p class="muted" style="font-size:.75rem;margin-top:.6rem">Approximate (Mifflin-St Jeor). Now generate a plan built to these numbers.</p></div>';
   }
