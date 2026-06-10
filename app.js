@@ -53,22 +53,17 @@
   function totals(ings) { let t = { kcal:0,p:0,f:0,c:0,fib:0,na:0 };
     ings.forEach(x => { const m = ING[x.id]; if (!m) return; const k = x.g/100;
       t.kcal+=k*m.kcal; t.p+=k*m.p; t.f+=k*m.f; t.c+=k*m.c; t.fib+=k*m.fib; t.na+=k*(m.na||0); }); return t; }
-  /* Default-salt sodium convention (ported from the app engine): few recipes
-     model salt explicitly, so assume ~1 g salt / 100 g cooked (≈393 mg Na/g)
-     for savoury dishes that don't. Reported na includes the estimate; the BP
-     rules below use INTRINSIC sodium (ingredients only) because the uniform
-     estimate scales with portion grams, not with how salty a dish is. */
-  const SALT_NA_PER_COOKED_G = 3.93;
-  const modelsSalt = ings => ings.some(x => x.id === 'salt' || x.id === 'black_salt');
-  const isSweetDish = d => d.role === 'sweet' || /sweet/.test(d.health || '');
-  const estSaltNa = (dish, ings) => (isSweetDish(dish) || modelsSalt(ings)) ? 0 : dish.cooked_g * SALT_NA_PER_COOKED_G;
+  /* Sodium is recipe-borne since 2026-06-10: every savoury dish carries an
+     explicit `salt` ingredient row (role-based defaults; dietitian-overridable),
+     so na comes out of totals() like every other nutrient — no estimate. */
   function unitMacros(dish, ings, units) { const t = totals(ings); const f = dish.cooked_g ? dish.gpu*units/dish.cooked_g : 0;
-    return { kcal:Math.round(t.kcal*f), p:+(t.p*f).toFixed(1), fat:+(t.f*f).toFixed(1), c:+(t.c*f).toFixed(1), fib:+(t.fib*f).toFixed(1), na:Math.round((t.na + estSaltNa(dish, ings))*f), grams:Math.round(dish.gpu*units) }; }
-  function intrinsicNa(dish, units) { const f = dish.cooked_g ? dish.gpu*units/dish.cooked_g : 0; return totals(dish.ingredients).na*f; }
+    return { kcal:Math.round(t.kcal*f), p:+(t.p*f).toFixed(1), fat:+(t.f*f).toFixed(1), c:+(t.c*f).toFixed(1), fib:+(t.fib*f).toFixed(1), na:Math.round(t.na*f), grams:Math.round(dish.gpu*units) }; }
+  function naAt(dish, units) { const f = dish.cooked_g ? dish.gpu*units/dish.cooked_g : 0; return totals(dish.ingredients).na*f; }
   const round5 = u => Math.round(u*2)/2;
-  function unitsForKcal(dish, ings, targetKcal) { const t = totals(ings);
+  // maxStretch lets gain-goal plans portion past the household maxU (x1.5)
+  function unitsForKcal(dish, ings, targetKcal, maxStretch) { const t = totals(ings); const mx = dish.maxU*(maxStretch||1);
     const perU = dish.cooked_g ? t.kcal*dish.gpu/dish.cooked_g : 0;
-    if (perU <= 0) return dish.defU; return Math.max(dish.minU, Math.min(dish.maxU, round5(targetKcal/perU) || dish.defU)); }
+    if (perU <= 0) return dish.defU; return Math.max(dish.minU, Math.min(mx, round5(targetKcal/perU) || dish.defU)); }
   function portionLabel(dish, u) { const pl = {piece:'pieces',cup:'cups',glass:'glasses',bowl:'bowls'};
     if (u === 1) return '1 ' + dish.unit; const n = Number.isInteger(u) ? u : u.toFixed(1); return n + ' ' + (pl[dish.unit] || dish.unit); }
 
@@ -88,8 +83,8 @@
     if (u.allergies.some(a => allergensOf(d.ingredients).includes(a))) return false;
     // Diabetic / PCOS: no sweets or added-sugar dishes (low-GI intent)
     if ((u.conditions.includes('diabetic')||u.conditions.includes('pcos')) && (/sweet/.test(d.health) || hasAddedSugar(d))) return false;
-    // BP / low-sodium: drop high-sodium dishes (intrinsic Na — see note above)
-    if (u.conditions.includes('bp') && intrinsicNa(d, d.defU) > 600) return false;
+    // BP / low-sodium: drop high-sodium dishes (sodium incl. recipe salt)
+    if (u.conditions.includes('bp') && naAt(d, d.defU) > 1200) return false;
     return true;
   }
   // soft preference (higher = ranked first) — steers plans healthier for conditions/goal
@@ -99,7 +94,7 @@
       if (/diabetic-friendly|millet|high-fiber/.test(t)) b += 70;
       if (isRefined(d)) b -= 60;
     }
-    if (u.conditions.includes('bp')) { const na = intrinsicNa(d, d.defU); b += na<300?40 : na>450?-40:0; }
+    if (u.conditions.includes('bp')) { const na = naAt(d, d.defU); b += na<600?40 : na>900?-40:0; }
     if (u.goal==='lose' && /low-cal|light|high-fiber/.test(t)) b += 25;
     return b;
   }
@@ -132,7 +127,7 @@
   /* build a component: a ranked pool of dishes for a role + chosen units.
      ctx = the day's running tallies {T, kcal, p, na} so each pick can correct
      what the day still lacks (ported from the app engine, 2026-06-10). */
-  const BP_DAY_NA_BUDGET = 1200; // intrinsic mg/day — guards against stacking borderline-salty dishes
+  const BP_DAY_NA_BUDGET = 3000; // mg/day — sodium is recipe-borne incl. salt; guards against stacking salty dishes
   function makeComp(u, roleFilter, slotKcal, rand, used, role, ctx, slotMeal) {
     let pool = DISHES.filter(d => eligible(d,u) && roleFilter(d));
     // "Everyday" is opt-in, but sparse regional pools must still fill a week —
@@ -154,24 +149,28 @@
     const T = ctx.T;
     const remKcal = Math.max(slotKcal, T.kcal - ctx.kcal);
     const targetPP = Math.min(0.45, Math.max(0, T.protein - ctx.p)*4 / remKcal);
+    const targetFF = Math.min(0.5, Math.max(0, T.fat - ctx.f)*9 / remKcal);
     const targetCC = T.carb*4 / T.kcal;
     const bp = u.conditions.includes('bp');
+    const stretch = u.goal === 'gain' ? 1.5 : 1;
     // least-used FIRST (rotate through the whole pool before repeating), then
     // kcal-fit at the PORTIONED units + protein/carb fit + jitter.
     pool = pool.map(d => {
-      const m = unitMacros(d, d.ingredients, unitsForKcal(d, d.ingredients, slotKcal));
+      const m = unitMacros(d, d.ingredients, unitsForKcal(d, d.ingredients, slotKcal, stretch));
       const pp = m.kcal > 0 ? m.p*4/m.kcal : 0, cc = m.kcal > 0 ? m.c*4/m.kcal : 0;
+      const ff = m.kcal > 0 ? m.fat*9/m.kcal : 0;
       let key = (used[d.id]||0)*100000 + Math.abs(m.kcal - slotKcal)
-              + Math.max(0, targetPP - pp)*1500 - condBonus(d,u) + rand()*90;
+              + Math.max(0, targetPP - pp)*2200
+              + Math.max(0, ff - targetFF)*350 - condBonus(d,u) + rand()*90;
       if (T.lowGI) key += Math.max(0, cc - targetCC)*350;
-      if (bp) key += Math.min(200, Math.max(0, ctx.na + intrinsicNa(d, d.defU) - BP_DAY_NA_BUDGET)*0.5);
+      if (bp) key += Math.min(200, Math.max(0, ctx.na + naAt(d, d.defU) - BP_DAY_NA_BUDGET)*0.5);
       return { d, key };
     }).sort((a,b)=>a.key-b.key).map(x=>x.d);
     const dish = pool[0];
     used[dish.id] = (used[dish.id]||0)+1;
-    const units = unitsForKcal(dish, dish.ingredients, slotKcal);
+    const units = unitsForKcal(dish, dish.ingredients, slotKcal, stretch);
     const m = unitMacros(dish, dish.ingredients, units);
-    ctx.kcal += m.kcal; ctx.p += m.p; ctx.na += intrinsicNa(dish, units);
+    ctx.kcal += m.kcal; ctx.p += m.p; ctx.f += m.fat; ctx.na += naAt(dish, units);
     return { role, pool, idx:0, dish, ings: cloneIngs(dish), units, targetKcal: slotKcal };
   }
 
@@ -181,6 +180,7 @@
      on lose — a deficit must not be bought back as protein calories). */
   function rebalanceProtein(comps, T, goal) {
     const ceil = goal === 'lose' ? 1.03 : 1.07;
+    const stretch = goal === 'gain' ? 1.5 : 1;
     const density = c => { const m1 = unitMacros(c.dish, c.ings, 1); return m1.kcal > 0 ? m1.p/m1.kcal : 0; };
     const byId = (a,b) => a.dish.id < b.dish.id ? -1 : 1;
     const dayOf = cs => cs.reduce((t,c) => { const m = unitMacros(c.dish, c.ings, c.units);
@@ -188,7 +188,7 @@
     for (let i = 0; i < 12; i++) {
       const day = dayOf(comps);
       if (day.p >= T.protein - 2) return;
-      const up = comps.filter(c => c.units + 0.5 <= c.dish.maxU)
+      const up = comps.filter(c => c.units + 0.5 <= c.dish.maxU*stretch)
                       .sort((a,b) => density(b)-density(a) || byId(a,b))[0];
       if (!up) return;
       const upK = unitMacros(up.dish, up.ings, up.units + 0.5).kcal - unitMacros(up.dish, up.ings, up.units).kcal;
@@ -214,7 +214,7 @@
     const curdK = curd ? unitMacros(curd, curd.ingredients, 1).kcal : 0;
     for (let day=0; day<7; day++) {
       const slots = {};
-      const ctx = { T, kcal:0, p:0, na:0 }; // running day tallies for macro-aware picks
+      const ctx = { T, kcal:0, p:0, f:0, na:0 }; // running day tallies for macro-aware picks
       // breakfast & snack: single item, with fallbacks so the slot is never empty
       // (some regions have no breakfast-tagged dish -> fall back to a snack, then any complete dish)
       const bk = T.kcal*SLOT.breakfast, sn = T.kcal*SLOT.snack;
@@ -248,7 +248,7 @@
         if (curd && items.length) {
           items.push({ role:'side', pool:[curd], idx:0, dish:curd, ings:cloneIngs(curd), units:1, targetKcal:0 });
           const cm = unitMacros(curd, curd.ingredients, 1);
-          ctx.kcal += cm.kcal; ctx.p += cm.p; ctx.na += intrinsicNa(curd, 1);
+          ctx.kcal += cm.kcal; ctx.p += cm.p; ctx.f += cm.fat; ctx.na += naAt(curd, 1);
         }
         slots[slot] = items.length ? { kind:'plate', items } : { kind:'single', items:[ tryComplete() ].filter(Boolean) };
       }
