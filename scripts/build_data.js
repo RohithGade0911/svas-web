@@ -55,6 +55,8 @@ const dishes = catalogue.map(d => {
   };
 });
 
-const out = 'window.SVAS_DATA = ' + JSON.stringify({ count:dishes.length, ingredients, subs, dishes }, null, 0) + ';\n';
+// allergen map bundled from the canonical source so app.js never carries its own copy
+const allergenMap = JSON.parse(fs.readFileSync(path.join(DB, 'layer1-ingredients/allergen_map.json'), 'utf8'));
+const out = 'window.SVAS_DATA = ' + JSON.stringify({ count:dishes.length, ingredients, subs, allergenMap, dishes }, null, 0) + ';\n';
 fs.writeFileSync(path.join(__dirname, '../data.js'), out);
 console.log(`Wrote data.js: ${dishes.length} dishes, ${Object.keys(ingredients).length} ingredients, ${Object.keys(subs).length} sub-groups (${(out.length/1024).toFixed(0)} KB).`);

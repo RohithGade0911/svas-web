@@ -14,13 +14,20 @@
   const hasAlt = id => { const g = GROUP_OF[id]; return !!g && SAFE_SWAP.has(g) && SUBS[g].length > 1; };
   const nextAlt = id => { const g = GROUP_OF[id]; if (!g) return id; const a = SUBS[g]; return a[(a.indexOf(id) + 1) % a.length]; };
 
-  /* allergens (derived from ingredients so swaps update them) */
-  const ALLERGEN = {
-    dairy:['milk_buffalo','milk_cow','low_fat_milk','paneer','khoa','curd','buttermilk','butter','ghee','cream'],
-    gluten:['wheat_atta','wheat_maida','wheat_semolina_rava','broken_wheat'], peanut:['groundnut'],
-    treenut:['cashew','coconut_fresh','coconut_dry'], sesame:['sesame'],
-    egg:['egg_whole','egg_white','egg_yolk'], fish:['fish_rohu','fish_catla'], shellfish:['prawns'],
-    soy:['soya_bean','soya_chunks','tofu'], mustard:['mustard_seeds','mustard_oil','mustard_leaves'],
+  /* allergens (derived from ingredients so swaps update them).
+     The map is bundled into data.js from the canonical food-database
+     allergen_map.json (same source as the app engine) — the literal below is
+     only a fallback for a stale data.js and mirrors that file (2026-06-10). */
+  const ALLERGEN = D.allergenMap || {
+    dairy:['milk_buffalo','milk_cow','low_fat_milk','greek_yogurt','paneer','khoa','curd','buttermilk','butter','ghee','cream','cheese_processed'],
+    gluten:['wheat_atta','wheat_maida','wheat_semolina_rava','broken_wheat','barley','bread_white','breadcrumbs','vermicelli','wheat_vermicelli','wheat_noodle'],
+    peanut:['groundnut','groundnut_oil'],
+    treenut:['cashew','almonds','pistachio','walnut'], sesame:['sesame','black_sesame'],
+    egg:['egg_whole','egg_white','egg_yolk'],
+    fish:['fish_rohu','fish_catla','catfish_freshwater','dried_fish','small_fish'],
+    shellfish:['prawns','crab_whole','squid'],
+    soy:['soya_bean','soya_chunks','soy_sauce','black_soybean','fermented_soybean','tofu'],
+    mustard:['mustard_seeds','mustard_oil','mustard_leaves'],
   };
   const ALLERGEN_OF = {};
   Object.entries(ALLERGEN).forEach(([a, ids]) => ids.forEach(id => (ALLERGEN_OF[id] = ALLERGEN_OF[id] || []).push(a)));
@@ -46,8 +53,18 @@
   function totals(ings) { let t = { kcal:0,p:0,f:0,c:0,fib:0,na:0 };
     ings.forEach(x => { const m = ING[x.id]; if (!m) return; const k = x.g/100;
       t.kcal+=k*m.kcal; t.p+=k*m.p; t.f+=k*m.f; t.c+=k*m.c; t.fib+=k*m.fib; t.na+=k*(m.na||0); }); return t; }
+  /* Default-salt sodium convention (ported from the app engine): few recipes
+     model salt explicitly, so assume ~1 g salt / 100 g cooked (≈393 mg Na/g)
+     for savoury dishes that don't. Reported na includes the estimate; the BP
+     rules below use INTRINSIC sodium (ingredients only) because the uniform
+     estimate scales with portion grams, not with how salty a dish is. */
+  const SALT_NA_PER_COOKED_G = 3.93;
+  const modelsSalt = ings => ings.some(x => x.id === 'salt' || x.id === 'black_salt');
+  const isSweetDish = d => d.role === 'sweet' || /sweet/.test(d.health || '');
+  const estSaltNa = (dish, ings) => (isSweetDish(dish) || modelsSalt(ings)) ? 0 : dish.cooked_g * SALT_NA_PER_COOKED_G;
   function unitMacros(dish, ings, units) { const t = totals(ings); const f = dish.cooked_g ? dish.gpu*units/dish.cooked_g : 0;
-    return { kcal:Math.round(t.kcal*f), p:+(t.p*f).toFixed(1), fat:+(t.f*f).toFixed(1), c:+(t.c*f).toFixed(1), fib:+(t.fib*f).toFixed(1), na:Math.round(t.na*f), grams:Math.round(dish.gpu*units) }; }
+    return { kcal:Math.round(t.kcal*f), p:+(t.p*f).toFixed(1), fat:+(t.f*f).toFixed(1), c:+(t.c*f).toFixed(1), fib:+(t.fib*f).toFixed(1), na:Math.round((t.na + estSaltNa(dish, ings))*f), grams:Math.round(dish.gpu*units) }; }
+  function intrinsicNa(dish, units) { const f = dish.cooked_g ? dish.gpu*units/dish.cooked_g : 0; return totals(dish.ingredients).na*f; }
   const round5 = u => Math.round(u*2)/2;
   function unitsForKcal(dish, ings, targetKcal) { const t = totals(ings);
     const perU = dish.cooked_g ? t.kcal*dish.gpu/dish.cooked_g : 0;
@@ -60,8 +77,10 @@
   const regionOk = (d,u) => d.region==='All' || d.cuisine==='Both' || u.regions.includes(d.region) ||
     (d.region==='Andhra & Telangana' && (u.regions.includes('Andhra')||u.regions.includes('Telangana')));
   const gramsOf = (d,id) => { const x = d.ingredients.find(i=>i.id===id); return x?x.g:0; };
-  const hasAddedSugar = d => gramsOf(d,'sugar')>=12 || gramsOf(d,'jaggery')>=15;
-  const isRefined = d => gramsOf(d,'wheat_maida')>=50;
+  // per SERVING (whole-recipe grams drift with how many servings a recipe makes)
+  const perServ = (d,id) => gramsOf(d,id) / (d.servings || 1);
+  const hasAddedSugar = d => perServ(d,'sugar')>=6 || perServ(d,'jaggery')>=7.5;
+  const isRefined = d => perServ(d,'wheat_maida')>=25;
   function eligible(d, u) {
     if (!regionOk(d,u)) return false;
     if (DIET[d.diet] > DIET[u.diet]) return false;
@@ -69,8 +88,8 @@
     if (u.allergies.some(a => allergensOf(d.ingredients).includes(a))) return false;
     // Diabetic / PCOS: no sweets or added-sugar dishes (low-GI intent)
     if ((u.conditions.includes('diabetic')||u.conditions.includes('pcos')) && (/sweet/.test(d.health) || hasAddedSugar(d))) return false;
-    // BP / low-sodium: drop high-sodium dishes
-    if (u.conditions.includes('bp') && unitMacros(d, d.ingredients, d.defU).na > 600) return false;
+    // BP / low-sodium: drop high-sodium dishes (intrinsic Na — see note above)
+    if (u.conditions.includes('bp') && intrinsicNa(d, d.defU) > 600) return false;
     return true;
   }
   // soft preference (higher = ranked first) — steers plans healthier for conditions/goal
@@ -80,7 +99,7 @@
       if (/diabetic-friendly|millet|high-fiber/.test(t)) b += 70;
       if (isRefined(d)) b -= 60;
     }
-    if (u.conditions.includes('bp')) { const na = unitMacros(d, d.ingredients, d.defU).na; b += na<300?40 : na>450?-40:0; }
+    if (u.conditions.includes('bp')) { const na = intrinsicNa(d, d.defU); b += na<300?40 : na>450?-40:0; }
     if (u.goal==='lose' && /low-cal|light|high-fiber/.test(t)) b += 25;
     return b;
   }
@@ -103,56 +122,130 @@
   }
   const rng = seed => { let s=seed%2147483647; if(s<=0)s+=2147483646; return ()=>(s=s*16807%2147483647)/2147483647; };
 
-  /* build a component: a ranked pool of dishes for a role + chosen units */
-  function makeComp(u, roleFilter, slotKcal, rand, used, role) {
+  /* build a component: a ranked pool of dishes for a role + chosen units.
+     ctx = the day's running tallies {T, kcal, p, na} so each pick can correct
+     what the day still lacks (ported from the app engine, 2026-06-10). */
+  const BP_DAY_NA_BUDGET = 1200; // intrinsic mg/day — guards against stacking borderline-salty dishes
+  function makeComp(u, roleFilter, slotKcal, rand, used, role, ctx, slotMeal) {
     let pool = DISHES.filter(d => eligible(d,u) && roleFilter(d));
+    // "Everyday" is opt-in, but sparse regional pools must still fill a week —
+    // when a slot has too few regional candidates, top up from Everyday.
+    if (pool.length < 3 && !u.regions.includes('Everyday')) {
+      const uu = Object.assign({}, u, { regions: u.regions.concat('Everyday') });
+      pool = DISHES.filter(d => eligible(d,uu) && roleFilter(d));
+    }
     if (!pool.length) return null;
-    // least-used FIRST (rotate through the whole pool before repeating), then macro-fit + jitter.
-    // This maximises day-to-day variety even when a single small-pool state is selected.
-    pool = pool.map(d => ({ d, key: (used[d.id]||0)*100000 + Math.abs(unitMacros(d, d.ingredients, d.defU).kcal - slotKcal) + rand()*90 - condBonus(d,u) }))
-               .sort((a,b)=>a.key-b.key).map(x=>x.d);
+    // plate components prefer dishes tagged for this meal (then any lunch/dinner
+    // dish) so breakfast/snack items stop landing on thalis; 'base' staples fit all.
+    if (slotMeal) {
+      const t0 = pool.filter(d => d.meal === slotMeal || d.meal === 'base');
+      const t1 = pool.filter(d => d.meal === 'lunch' || d.meal === 'dinner' || d.meal === 'base');
+      // a tier only wins if it offers a choice (≥2) — a single-dish tier would
+      // kill the swap feature and pin the same dish every day
+      pool = [t0, t1, pool].find(t => t.length >= 2) || (t0.length ? t0 : (t1.length ? t1 : pool));
+    }
+    const T = ctx.T;
+    const remKcal = Math.max(slotKcal, T.kcal - ctx.kcal);
+    const targetPP = Math.min(0.45, Math.max(0, T.protein - ctx.p)*4 / remKcal);
+    const targetCC = T.carb*4 / T.kcal;
+    const bp = u.conditions.includes('bp');
+    // least-used FIRST (rotate through the whole pool before repeating), then
+    // kcal-fit at the PORTIONED units + protein/carb fit + jitter.
+    pool = pool.map(d => {
+      const m = unitMacros(d, d.ingredients, unitsForKcal(d, d.ingredients, slotKcal));
+      const pp = m.kcal > 0 ? m.p*4/m.kcal : 0, cc = m.kcal > 0 ? m.c*4/m.kcal : 0;
+      let key = (used[d.id]||0)*100000 + Math.abs(m.kcal - slotKcal)
+              + Math.max(0, targetPP - pp)*1500 - condBonus(d,u) + rand()*90;
+      if (T.lowGI) key += Math.max(0, cc - targetCC)*350;
+      if (bp) key += Math.min(200, Math.max(0, ctx.na + intrinsicNa(d, d.defU) - BP_DAY_NA_BUDGET)*0.5);
+      return { d, key };
+    }).sort((a,b)=>a.key-b.key).map(x=>x.d);
     const dish = pool[0];
     used[dish.id] = (used[dish.id]||0)+1;
-    return { role, pool, idx:0, dish, ings: cloneIngs(dish), units: unitsForKcal(dish, dish.ingredients, slotKcal), targetKcal: slotKcal };
+    const units = unitsForKcal(dish, dish.ingredients, slotKcal);
+    const m = unitMacros(dish, dish.ingredients, units);
+    ctx.kcal += m.kcal; ctx.p += m.p; ctx.na += intrinsicNa(dish, units);
+    return { role, pool, idx:0, dish, ings: cloneIngs(dish), units, targetKcal: slotKcal };
+  }
+
+  /* day-level corrector (ported from the app engine): upgrade the most
+     protein-dense component by half a unit, paying for it (when kcal headroom
+     is gone) by trimming the least dense one. Day kcal stays within ±7% (±3%
+     on lose — a deficit must not be bought back as protein calories). */
+  function rebalanceProtein(comps, T, goal) {
+    const ceil = goal === 'lose' ? 1.03 : 1.07;
+    const density = c => { const m1 = unitMacros(c.dish, c.ings, 1); return m1.kcal > 0 ? m1.p/m1.kcal : 0; };
+    const byId = (a,b) => a.dish.id < b.dish.id ? -1 : 1;
+    const dayOf = cs => cs.reduce((t,c) => { const m = unitMacros(c.dish, c.ings, c.units);
+      return { kcal: t.kcal + m.kcal, p: t.p + m.p }; }, { kcal:0, p:0 });
+    for (let i = 0; i < 12; i++) {
+      const day = dayOf(comps);
+      if (day.p >= T.protein - 2) return;
+      const up = comps.filter(c => c.units + 0.5 <= c.dish.maxU)
+                      .sort((a,b) => density(b)-density(a) || byId(a,b))[0];
+      if (!up) return;
+      const upK = unitMacros(up.dish, up.ings, up.units + 0.5).kcal - unitMacros(up.dish, up.ings, up.units).kcal;
+      let down = null;
+      if (day.kcal + upK > T.kcal*ceil) {
+        down = comps.filter(c => c !== up && c.units - 0.5 >= c.dish.minU && density(c) < density(up))
+                    .sort((a,b) => density(a)-density(b) || byId(a,b))[0];
+        if (!down) return;
+      }
+      up.units += 0.5; if (down) down.units -= 0.5;
+      const after = dayOf(comps);
+      if (after.p <= day.p || after.kcal < T.kcal*0.93 || after.kcal > T.kcal*ceil) {
+        up.units -= 0.5; if (down) down.units += 0.5; return;
+      }
+    }
   }
 
   function buildPlan(u) {
     const T = targets(u), rand = rng(u.seed || ((u.age*131 + u.weight*17 + u.height)|0) || 42), used = {}, days = [];
-    const isVeg = u.diet === 'veg';
+    // curd is part of the lunch/dinner plate, so it eats from the slot budget
+    const curdDish = !u.allergies.includes('dairy') ? DISHES.find(d=>d.id==='base_curd') : null;
+    const curd = (curdDish && eligible(curdDish,u)) ? curdDish : null;
+    const curdK = curd ? unitMacros(curd, curd.ingredients, 1).kcal : 0;
     for (let day=0; day<7; day++) {
       const slots = {};
+      const ctx = { T, kcal:0, p:0, na:0 }; // running day tallies for macro-aware picks
       // breakfast & snack: single item, with fallbacks so the slot is never empty
       // (some regions have no breakfast-tagged dish -> fall back to a snack, then any complete dish)
       const bk = T.kcal*SLOT.breakfast, sn = T.kcal*SLOT.snack;
       slots.breakfast = { kind:'single', items:[
-        makeComp(u, d=>d.meal==='breakfast', bk, rand, used, 'meal')
-        || makeComp(u, d=>d.meal==='snack' && d.role!=='sweet', bk, rand, used, 'meal')
-        || makeComp(u, d=>d.role==='complete', bk, rand, used, 'meal')
+        makeComp(u, d=>d.meal==='breakfast', bk, rand, used, 'meal', ctx)
+        || makeComp(u, d=>d.meal==='snack' && d.role!=='sweet', bk, rand, used, 'meal', ctx)
+        || makeComp(u, d=>d.role==='complete', bk, rand, used, 'meal', ctx)
       ].filter(Boolean) };
       slots.snack = { kind:'single', items:[
-        makeComp(u, d=>d.meal==='snack', sn, rand, used, 'snack')
-        || makeComp(u, d=>['side','sweet','drink'].includes(d.role), sn, rand, used, 'snack')
-        || makeComp(u, d=>d.role==='complete', sn, rand, used, 'snack')
+        makeComp(u, d=>d.meal==='snack', sn, rand, used, 'snack', ctx)
+        || makeComp(u, d=>['side','sweet','drink'].includes(d.role), sn, rand, used, 'snack', ctx)
+        || makeComp(u, d=>d.role==='complete', sn, rand, used, 'snack', ctx)
       ].filter(Boolean) };
-      // lunch & dinner: thali (grain + dal/main + sabzi [+curd]) OR occasional one-dish complete
+      // lunch & dinner: thali (grain + protein curry/dal + sabzi [+curd]) OR occasional one-dish complete
       for (const slot of ['lunch','dinner']) {
         const sk = T.kcal*SLOT[slot];
-        const tryComplete = () => makeComp(u, d=>(d.meal===slot)&&d.role==='complete', sk, rand, used, 'meal');
+        const tryComplete = () => makeComp(u, d=>(d.meal===slot)&&d.role==='complete', sk, rand, used, 'meal', ctx);
         if (rand() < 0.22) { const c = tryComplete(); if (c) { slots[slot] = { kind:'single', items:[c] }; continue; } }
         const items = [];
-        const grain = makeComp(u, d=>d.role==='grain', sk*0.45, rand, used, 'grain');
-        const prot  = isVeg ? makeComp(u, d=>d.role==='dal', sk*0.35, rand, used, 'dal')
-                            : (makeComp(u, d=>d.role==='main', sk*0.40, rand, used, 'main') || makeComp(u, d=>d.role==='dal', sk*0.35, rand, used, 'dal'));
-        const sabzi = makeComp(u, d=>d.role==='sabzi', sk*0.20, rand, used, 'sabzi');
+        const budget = sk - curdK; // plate shares sum to 100% of what's left after curd
+        const grain = makeComp(u, d=>d.role==='grain', budget*0.45, rand, used, 'grain', ctx, slot);
+        // one protein pool for every diet — main/gravy/dal compete on the
+        // protein-aware score (egg & paneer mains were unreachable for veg/egg users)
+        const prot  = makeComp(u, d=>d.role==='main'||d.role==='gravy'||d.role==='dal', budget*0.35, rand, used, 'main', ctx, slot);
+        const sabzi = makeComp(u, d=>d.role==='sabzi', budget*0.20, rand, used, 'sabzi', ctx, slot);
         [grain, prot, sabzi].forEach(c => c && items.push(c));
         // can't form a real thali (e.g. an all-"complete" set like the high-protein bowls) -> serve one complete dish
         if (items.filter(c => c.role !== 'side').length < 2) {
           const c = tryComplete(); if (c) { slots[slot] = { kind:'single', items:[c] }; continue; }
         }
-        if (!u.allergies.includes('dairy')) { const curd = DISHES.find(d=>d.id==='base_curd');
-          if (curd && eligible(curd,u)) items.push({ role:'side', pool:[curd], idx:0, dish:curd, ings:cloneIngs(curd), units:1, targetKcal:0 }); }
+        if (curd && items.length) {
+          items.push({ role:'side', pool:[curd], idx:0, dish:curd, ings:cloneIngs(curd), units:1, targetKcal:0 });
+          const cm = unitMacros(curd, curd.ingredients, 1);
+          ctx.kcal += cm.kcal; ctx.p += cm.p; ctx.na += intrinsicNa(curd, 1);
+        }
         slots[slot] = items.length ? { kind:'plate', items } : { kind:'single', items:[ tryComplete() ].filter(Boolean) };
       }
+      rebalanceProtein(['breakfast','lunch','snack','dinner'].flatMap(s => slots[s].items || []), T, u.goal);
       days.push({ slots });
     }
     return { T, days };
