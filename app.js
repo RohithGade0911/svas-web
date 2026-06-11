@@ -64,7 +64,9 @@
   function unitsForKcal(dish, ings, targetKcal, maxStretch) { const t = totals(ings); const mx = dish.maxU*(maxStretch||1);
     const perU = dish.cooked_g ? t.kcal*dish.gpu/dish.cooked_g : 0;
     if (perU <= 0) return dish.defU; return Math.max(dish.minU, Math.min(mx, round5(targetKcal/perU) || dish.defU)); }
-  function portionLabel(dish, u) { const pl = {piece:'pieces',cup:'cups',glass:'glasses',bowl:'bowls'};
+  function portionLabel(dish, u) { const pl = {piece:'pieces',cup:'cups',glass:'glasses',bowl:'bowls',
+    banana:'bananas',apple:'apples',mango:'mangoes',orange:'oranges',guava:'guavas',chikoo:'chikoos',
+    pear:'pears',peach:'peaches',plum:'plums',fig:'figs',date:'dates',avocado:'avocados',amla:'amlas',mosambi:'mosambis'};
     if (u === 1) return '1 ' + dish.unit; const n = Number.isInteger(u) ? u : u.toFixed(1); return n + ' ' + (pl[dish.unit] || dish.unit); }
 
   /* eligibility */
@@ -220,11 +222,19 @@
       const bk = T.kcal*SLOT.breakfast, sn = T.kcal*SLOT.snack;
       slots.breakfast = { kind:'single', items:[
         makeComp(u, d=>d.meal==='breakfast', bk, rand, used, 'meal', ctx)
-        || makeComp(u, d=>d.meal==='snack' && d.role!=='sweet', bk, rand, used, 'meal', ctx)
+        || makeComp(u, d=>d.meal==='snack' && d.role!=='sweet' && d.role!=='fruit', bk, rand, used, 'meal', ctx)
         || makeComp(u, d=>d.role==='complete', bk, rand, used, 'meal', ctx)
       ].filter(Boolean) };
+      // Fruit rule (2026-06-11, mirrored in @svas/engine): when the snack budget
+      // fits a fruit portion, ~1 day in 4 offers fresh fruit; NOT on "lose"
+      // plans (protein guard); lowGI plans skip high-GI fruits. Fruits never
+      // enter the general snack pool.
+      const fruitPick = (u.goal !== 'lose' && T.kcal*SLOT.snack <= 280 && rand() < 0.25)
+        ? makeComp(u, d=>d.role==='fruit' && !(T.lowGI && /high-gi/.test(d.health)), sn, rand, used, 'snack', ctx)
+        : undefined;
       slots.snack = { kind:'single', items:[
-        makeComp(u, d=>d.meal==='snack', sn, rand, used, 'snack', ctx)
+        fruitPick
+        || makeComp(u, d=>d.meal==='snack' && d.role!=='fruit', sn, rand, used, 'snack', ctx)
         || makeComp(u, d=>['side','sweet','drink'].includes(d.role), sn, rand, used, 'snack', ctx)
         || makeComp(u, d=>d.role==='complete', sn, rand, used, 'snack', ctx)
       ].filter(Boolean) };
